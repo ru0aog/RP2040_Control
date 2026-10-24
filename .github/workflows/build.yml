@@ -12,7 +12,7 @@ jobs:
   
     steps:  
       - name: Checkout  
-        uses: actions/checkout@v4  
+        uses: actions/checkout@v5  
   
       - name: Install Qt  
         uses: jurplel/install-qt-action@v4  
@@ -38,7 +38,7 @@ jobs:
           windeployqt --release --no-translations --compiler-runtime dist/RP2040_Control.exe  
   
       - name: Upload build artifact  
-        uses: actions/upload-artifact@v4  
+        uses: actions/upload-artifact@v5  
         with:  
           name: RP2040_Control  
           path: dist
