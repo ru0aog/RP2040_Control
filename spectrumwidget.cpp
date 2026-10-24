@@ -241,8 +241,17 @@ AudioSpectrumWidget::AudioSpectrumWidget(QWidget* parent)
 
     plot = new SpectrumPlot(this);
 
+    volumeSlider = new QSlider(Qt::Vertical, this);
+    volumeSlider->setRange(0, 100);
+    volumeSlider->setValue(80);
+    volumeSlider->setToolTip("Громкость прослушивания");
+
+    auto* plotRow = new QHBoxLayout();
+    plotRow->addWidget(plot, 1);
+    plotRow->addWidget(volumeSlider);
+
     layout->addLayout(controls);
-    layout->addWidget(plot, 1);
+    layout->addLayout(plotRow, 1);
 
     updateTimer = new QTimer(this);
     updateTimer->setInterval(50);
@@ -255,6 +264,9 @@ AudioSpectrumWidget::AudioSpectrumWidget(QWidget* parent)
 
     connect(playbackButton, &QPushButton::clicked,
         this, &AudioSpectrumWidget::togglePlayback);
+
+    connect(volumeSlider, &QSlider::valueChanged,
+        this, [this](int) { applyVolume(); });
 
     connect(deviceCombo,
         &QComboBox::currentIndexChanged,
@@ -586,8 +598,42 @@ bool AudioSpectrumWidget::startPlayback()
         buffer.busy.store(false);
     }
 
+    // Применяем текущую громкость ползунка.  
+    // НЕ через applyVolume() — playbackMutex уже захвачен.  
+    if (volumeSlider) {
+        const int percent =
+            std::clamp(volumeSlider->value(), 0, 100);
+
+        const WORD level =
+            WORD(percent * 65535 / 100);
+
+        waveOutSetVolume(
+            waveOut,
+            (DWORD(level) << 16) | level);
+    }
+
     playbackEnabled.store(true);
     return true;
+}
+
+void AudioSpectrumWidget::applyVolume()
+{
+    std::lock_guard<std::mutex> lock(playbackMutex);
+
+    if (!waveOut)
+        return;
+
+    const int percent =
+        volumeSlider ? volumeSlider->value() : 80;
+
+    const WORD level =
+        WORD(std::clamp(percent, 0, 100) * 65535 / 100);
+
+    // Оба канала (младшее/старшее слово) одинаково.  
+    const DWORD both =
+        (DWORD(level) << 16) | DWORD(level);
+
+    waveOutSetVolume(waveOut, both);
 }
 
 void AudioSpectrumWidget::stopPlayback()

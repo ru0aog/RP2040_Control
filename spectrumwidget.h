@@ -9,6 +9,8 @@
 #include <QByteArray>
 #include <QTimer>
 
+class QSlider;
+
 #include <windows.h>
 #include <mmsystem.h>
 
@@ -62,12 +64,14 @@ private:
     void togglePlayback();
     bool startPlayback();
     void stopPlayback();
+    void applyVolume();
 
     QComboBox* deviceCombo = nullptr;
     QPushButton* startButton = nullptr;
     QPushButton* playbackButton = nullptr;
     QLabel* statusLabel = nullptr;
     SpectrumPlot* plot = nullptr;
+    QSlider* volumeSlider = nullptr;
     QTimer* updateTimer = nullptr;
 
     HWAVEIN waveIn = nullptr;
