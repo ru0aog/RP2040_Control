@@ -7,7 +7,7 @@ int main(int argc, char* argv[])
 {
     QApplication app(argc, argv);
     MainWindow window;
-    window.resize(window.minimumSizeHint());
+    window.resize(630, window.minimumSizeHint().height());
 
     // Центрируем окно на экране.  
     const QRect screen = window.screen()->availableGeometry();

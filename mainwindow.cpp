@@ -439,7 +439,8 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setWindowTitle("RP2040 Control");
-    resize(1100, 820);
+    setMinimumWidth(630);
+    resize(630, 820);
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
@@ -552,7 +553,7 @@ MainWindow::MainWindow(QWidget* parent)
     // Ручка настройки полностью удалена.
 
     // Режимы демодуляции.
-    auto* modeGroupBox = new QGroupBox("Режим демодуляции");
+    auto* modeGroupBox = new QGroupBox("Демодулятор");
     auto* modeLayout = new QVBoxLayout(modeGroupBox);
 
     modeGroup = new QButtonGroup(this);
@@ -608,11 +609,11 @@ MainWindow::MainWindow(QWidget* parent)
     auto* normalButton = new QPushButton("Норм");
     auto* wideButton = new QPushButton("Широкая");
 
-    auto* ntButton = new QPushButton("NT");
+    ntButton = new QPushButton("NT");
     ntButton->setCheckable(true);
     ntButton->setMinimumHeight(38);
 
-    auto* nrButton = new QPushButton("NR");
+    nrButton = new QPushButton("NR");
     nrButton->setCheckable(true);
     nrButton->setMinimumHeight(38);
 
@@ -668,15 +669,62 @@ MainWindow::MainWindow(QWidget* parent)
 
     auto* topRow = new QHBoxLayout();
     topRow->addWidget(freqGroup, 5);
-    topRow->addWidget(modeGroupBox, 2);
+    topRow->addWidget(modeGroupBox, 1);
+
+    // Сворачиваемая секция: журнал обмена + CAT-команды.  
+    auto* logSection = new QWidget();
+    auto* logSectionLayout = new QVBoxLayout(logSection);
+    logSectionLayout->setContentsMargins(0, 0, 0, 0);
+    logSectionLayout->addLayout(logHeaderLayout);
+    logSectionLayout->addWidget(logView, 1);
+    logSectionLayout->addLayout(cmdLayout);
+
+    auto* logToggleButton = new QPushButton("▼ Журнал обмена и CAT-команды");
+    logToggleButton->setCheckable(true);
+    logToggleButton->setChecked(false);           // (1) старт — свёрнуто 
+    logToggleButton->setStyleSheet(
+        "QPushButton {"
+        " background: #101820;"
+        " color: #E6EDF3;"
+        " border: none;"
+        " text-align: left;"
+        "}"
+        "QPushButton:hover {"
+        " background: #101820;"
+        "}"
+        "QPushButton:checked {"
+        " background: #101820;"
+        " color: #E6EDF3;"
+        " border: none;"
+        " font-weight: normal;"
+        "}"
+        "QPushButton:checked:hover {"
+        " background: #101820;"
+        "}");
+
+    logSection->setVisible(false);                // (1) секция скрыта на старте 
+
+    connect(logToggleButton, &QPushButton::toggled,
+        this, [this, logToggleButton, logSection](bool shown) {
+            logSection->setVisible(shown);
+            logToggleButton->setText(shown
+                ? "▼ Журнал обмена и CAT-команды"
+                : "► Журнал обмена и CAT-команды");
+
+            // (3) не даём окну менять высоту при показе/скрытии секции  
+            const int w = width();
+            const int h = height();
+            QTimer::singleShot(0, this, [this, w, h]() {
+                resize(w, h);
+                });
+        });
 
     mainLayout->addWidget(title);
     mainLayout->addLayout(portLayout);
     mainLayout->addLayout(topRow);
     mainLayout->addWidget(filterGroup);
-    mainLayout->addLayout(logHeaderLayout);
-    mainLayout->addWidget(logView, 1);
-    mainLayout->addLayout(cmdLayout);
+    mainLayout->addWidget(logToggleButton);
+    mainLayout->addWidget(logSection, 1);
 
     setCentralWidget(central);
 
@@ -760,7 +808,12 @@ MainWindow::MainWindow(QWidget* parent)
         });
 
     connect(refreshButton, &QPushButton::clicked,
-        this, &MainWindow::refreshPorts);
+        this, [this]() {
+            refreshPorts();
+
+            if (serialHandle != INVALID_HANDLE_VALUE)
+                requestRadioState();
+        });
 
     connect(connectButton, &QPushButton::clicked,
         this, &MainWindow::toggleConnection);
@@ -909,8 +962,10 @@ MainWindow::MainWindow(QWidget* parent)
     if (!autoPort.isEmpty() && autoPort != "COM1") {
         toggleConnection();
 
-        if (serialHandle != INVALID_HANDLE_VALUE && audioSpectrumWidget)
+        if (serialHandle != INVALID_HANDLE_VALUE && audioSpectrumWidget) {
             audioSpectrumWidget->startCaptureIfIdle();
+            audioSpectrumWidget->startPlaybackIfIdle();
+        }
     }
 }
 
@@ -1196,15 +1251,15 @@ void MainWindow::appendLog(const QString& text)
         logView->verticalScrollBar()->maximum());
 }
 
-void MainWindow::requestRadioState()  
-{  
-    enqueueCommand("FA;");
+void MainWindow::requestRadioState()
+{
     enqueueCommand("FA;");
     enqueueCommand("MD;");
-    enqueueCommand("MD;");
-    enqueueCommand("SL;");  
+    enqueueCommand("SL;");
     enqueueCommand("SH;");
-}  
+    enqueueCommand("NR;");
+    enqueueCommand("NT;");
+}
   
 void MainWindow::enqueueCommand(const QString& command)  
 {  
@@ -1288,6 +1343,16 @@ void MainWindow::processReceived(const QByteArray& data)
                 bandwidthSlider->setBand(lowCutHz, highCutHz);
                 updateBand(lowCutHz, highCutHz);
             }
+        }
+        else if (packet.startsWith("NR") && packet.size() >= 3) {
+            const bool on = packet.mid(2, 1) == "1";
+            const QSignalBlocker blocker(nrButton);
+            nrButton->setChecked(on);
+        }
+        else if (packet.startsWith("NT") && packet.size() >= 3) {
+            const bool on = packet.mid(2, 1) == "1";
+            const QSignalBlocker blocker(ntButton);
+            ntButton->setChecked(on);
         }
         else if (packet == "?") {
             appendLog("[WARN] Приёмник вернул ошибку CAT.");

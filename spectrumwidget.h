@@ -14,6 +14,7 @@ class QSlider;
 #include <windows.h>
 #include <mmsystem.h>
 
+#include <fstream>
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -38,6 +39,7 @@ public:
 
     void startCaptureIfIdle();
     void stopCaptureIfActive();
+    void startPlaybackIfIdle();
 
 private:
     static void CALLBACK waveInCallback(
@@ -67,6 +69,19 @@ private:
     void stopPlayback();
     void requestStop();   // безопасный запрос остановки из любого потока
     void applyVolume();
+
+    void toggleRecording();
+    void startRecording();
+    void stopRecording();
+    void promptSaveRecording();
+
+    QPushButton* recordButton = nullptr;
+
+    std::ofstream recordFile;   // требует #include <fstream>  
+    std::mutex recordMutex;
+    std::atomic_bool recording{ false };
+    quint32 recordedDataBytes = 0;
+    QString recordTempPath;
 
     QComboBox* deviceCombo = nullptr;
     QPushButton* startButton = nullptr;

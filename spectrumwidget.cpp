@@ -15,7 +15,12 @@
 #include <QDateTime>
 #include <QPainterPath>
 #include <QMetaObject>
+#include <QFileDialog>  
+#include <QFile>
+#include <QDir>
+#include <QStandardPaths>
 
+#include <fstream>
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -239,18 +244,22 @@ AudioSpectrumWidget::AudioSpectrumWidget(QWidget* parent)
     playbackButton = new QPushButton("Прослушивание: выкл.", this);
     playbackButton->setEnabled(false);
     statusLabel = new QLabel("Захват остановлен", this);
+    statusLabel->hide();   // больше не показываем, но член нужен для setText(...)  
+
+    recordButton = new QPushButton("Запись", this);
+    recordButton->setEnabled(false);
 
     controls->addWidget(new QLabel("Аудиовход:"));
     controls->addWidget(deviceCombo, 1);
     controls->addWidget(startButton);
+    controls->addWidget(recordButton);
     controls->addWidget(playbackButton);
-    controls->addWidget(statusLabel);
 
     plot = new SpectrumPlot(this);
 
     volumeSlider = new QSlider(Qt::Vertical, this);
     volumeSlider->setRange(0, 100);
-    volumeSlider->setValue(80);
+    volumeSlider->setValue(30);   // стартовая громкость 30 %
     volumeSlider->setToolTip("Громкость прослушивания");
     volumeSlider->setStyleSheet(R"(  
         QSlider::groove:vertical {  
@@ -301,7 +310,11 @@ AudioSpectrumWidget::AudioSpectrumWidget(QWidget* parent)
         this, [this](int) {
             if (capturing)
                 stopCapture();
+
         });
+
+    connect(recordButton, &QPushButton::clicked,
+        this, &AudioSpectrumWidget::toggleRecording);
 
     refreshDevices();
 
@@ -393,6 +406,12 @@ void AudioSpectrumWidget::startCaptureIfIdle()
 {
     if (!capturing && startButton->isEnabled())
         toggleCapture();
+}
+
+void AudioSpectrumWidget::startPlaybackIfIdle()
+{
+    if (capturing.load() && !playbackEnabled.load())
+        togglePlayback();
 }
 
 bool AudioSpectrumWidget::startCapture()
@@ -504,6 +523,8 @@ bool AudioSpectrumWidget::startCapture()
 
     startButton->setText("Остановить");
     playbackButton->setEnabled(true);
+    recordButton->setEnabled(true);
+    recordButton->setText("Запись");
     playbackButton->setText("Прослушивание: выкл.");
 
     statusLabel->setText(
@@ -522,6 +543,9 @@ bool AudioSpectrumWidget::startCapture()
 void AudioSpectrumWidget::stopCapture()
 {
     stopPlayback();
+    stopRecording();
+    recordButton->setEnabled(false);
+    recordButton->setText("Запись");
     capturing = false;
     updateTimer->stop();
 
@@ -765,6 +789,17 @@ void AudioSpectrumWidget::handleWaveBuffer(WAVEHDR* header)
         return;
 
     if (capturing.load() && header->dwBytesRecorded > 0) {
+
+        if (recording.load()) {
+            std::lock_guard<std::mutex> lock(recordMutex);
+            if (recordFile.is_open()) {
+                recordFile.write(
+                    header->lpData,
+                    std::streamsize(header->dwBytesRecorded));
+                recordedDataBytes += header->dwBytesRecorded;
+            }
+        }
+
         lastBufferMs.store(QDateTime::currentMSecsSinceEpoch());
 
         const auto* samples =
@@ -843,6 +878,159 @@ void AudioSpectrumWidget::handleWaveBuffer(WAVEHDR* header)
         if (result != MMSYSERR_NOERROR)
             requestStop();
     }
+}
+
+void AudioSpectrumWidget::promptSaveRecording()
+{
+    QString tempPath;
+    {
+        std::lock_guard<std::mutex> lock(recordMutex);
+        tempPath = recordTempPath;
+        recordTempPath.clear();
+    }
+
+    if (tempPath.isEmpty() || !QFile::exists(tempPath))
+        return;
+
+    const QString suggested =
+        "record_" +
+        QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") +
+        ".wav";
+
+    const QString target = QFileDialog::getSaveFileName(
+        this,
+        "Сохранить запись",
+        suggested,
+        "WAV-файл (*.wav)");
+
+    if (target.isEmpty()) {
+        // Пользователь отменил — удаляем временный файл.  
+        QFile::remove(tempPath);
+        return;
+    }
+
+    // Перезаписываем, если файл уже существует.  
+    if (QFile::exists(target))
+        QFile::remove(target);
+
+    if (!QFile::rename(tempPath, target)) {
+        // rename может не сработать между разными томами — копируем.  
+        if (QFile::copy(tempPath, target))
+            QFile::remove(tempPath);
+        else
+            QMessageBox::warning(
+                this,
+                "Запись",
+                "Не удалось сохранить файл записи.");
+    }
+}
+
+void AudioSpectrumWidget::toggleRecording()
+{
+    bool wasRecording = false;
+    {
+        std::lock_guard<std::mutex> lock(recordMutex);
+        wasRecording = recording;
+    }
+
+    if (wasRecording) {
+        stopRecording();
+        promptSaveRecording();   // диалог только при ручной остановке  
+    }
+    else {
+        if (!capturing.load()) {
+            QMessageBox::warning(
+                this,
+                "Запись",
+                "Сначала запусти захват.");
+            return;
+        }
+        startRecording();
+    }
+}
+
+void AudioSpectrumWidget::startRecording()
+{
+    std::lock_guard<std::mutex> lock(recordMutex);
+
+    if (recording)
+        return;
+
+    // Временный файл во временной папке пользователя.  
+    recordTempPath =
+        QDir(QStandardPaths::writableLocation(
+            QStandardPaths::TempLocation))
+        .filePath("rp2040_rec_" +
+            QDateTime::currentDateTime()
+            .toString("yyyyMMdd_HHmmss") +
+            ".wav");
+
+    recordFile.open(
+        recordTempPath.toStdString(),
+        std::ios::binary | std::ios::out | std::ios::trunc);
+
+    if (!recordFile.is_open()) {
+        QMessageBox::warning(
+            this,
+            "Запись",
+            "Не удалось создать временный файл записи.");
+        recordTempPath.clear();
+        return;
+    }
+
+    // Резервируем 44 байта под WAV-заголовок (запишем в конце).  
+    const char placeholder[44] = {};
+    recordFile.write(placeholder, sizeof(placeholder));
+
+    recordedDataBytes = 0;
+    recording = true;
+
+    recordButton->setText("Стоп");
+}
+
+void AudioSpectrumWidget::stopRecording()
+{
+    std::lock_guard<std::mutex> lock(recordMutex);
+
+    if (!recording)
+        return;
+
+    recording = false;
+
+    // Дописываем корректный WAV-заголовок.  
+    const quint32 dataBytes = recordedDataBytes;
+    const quint32 riffSize = 36 + dataBytes;
+    const quint32 rate = quint32(sampleRate);
+    const quint32 byteRate = rate * 2;
+
+    auto put32 = [&](std::streampos at, quint32 v) {
+        recordFile.seekp(at);
+        recordFile.write(reinterpret_cast<const char*>(&v), 4);
+        };
+    auto put16 = [&](std::streampos at, quint16 v) {
+        recordFile.seekp(at);
+        recordFile.write(reinterpret_cast<const char*>(&v), 2);
+        };
+
+    recordFile.seekp(0);
+    recordFile.write("RIFF", 4);
+    put32(4, riffSize);
+    recordFile.seekp(8);
+    recordFile.write("WAVEfmt ", 8);
+    put32(16, 16);            // fmt chunk size  
+    put16(20, 1);             // PCM  
+    put16(22, 1);             // mono  
+    put32(24, rate);          // sample rate  
+    put32(28, byteRate);      // byte rate  
+    put16(32, 2);             // block align  
+    put16(34, 16);            // bits per sample  
+    recordFile.seekp(36);
+    recordFile.write("data", 4);
+    put32(40, dataBytes);     // data size  
+
+    recordFile.close();
+
+    recordButton->setText("Запись");
 }
 
 // ============================================================================

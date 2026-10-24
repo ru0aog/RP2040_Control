@@ -55,6 +55,8 @@ private:
     QComboBox* baudCombo = nullptr;
     QPushButton* connectButton = nullptr;
     QPushButton* refreshButton = nullptr;
+    QPushButton* ntButton = nullptr;
+    QPushButton* nrButton = nullptr;
     QLineEdit* commandEdit = nullptr;
     QPushButton* sendButton = nullptr;
     QPlainTextEdit* logView = nullptr;
