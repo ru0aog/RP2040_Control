@@ -101,8 +101,13 @@ private:
 
     QVector<qint16> pendingSamples;
     QVector<float> spectrumDb;
+    QVector<float> spectrumAvg;      // накопленное усреднённое значение, дБ  
 
     int sampleRate = 16000;
 
     static constexpr int FFT_SIZE = 2048;
+
+    // Коэффициент сглаживания EMA: 0..1.  
+    // Меньше — сильнее усреднение (плавнее, но инертнее).  
+    static constexpr float AVG_ALPHA = 0.3f;
 };

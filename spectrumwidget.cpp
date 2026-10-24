@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
-#include <numbers>
 #include <cstring>
 
 // ============================================================================
@@ -98,10 +97,11 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override
     {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
+        if (gridCache.size() != size())
+            rebuildGrid();
 
-        p.fillRect(rect(), QColor("#071017"));
+        QPainter p(this);
+        p.drawPixmap(0, 0, gridCache);   // фон+сетка из кэша, без Antialiasing  
 
         const int left = 52;
         const int right = width() - 12;
@@ -114,45 +114,14 @@ protected:
         if (graphWidth <= 0 || graphHeight <= 0)
             return;
 
-        // Сетка по уровню.
-        p.setFont(QFont("Segoe UI", 8));
-
-        for (int db = 0; db >= -100; db -= 20) {
-            const int y = bottom -
-                ((db + 100) * graphHeight / 100);
-
-            p.setPen(QColor("#263945"));
-            p.drawLine(left, y, right, y);
-
-            p.setPen(QColor("#9BAFBD"));
-            p.drawText(
-                2, y - 5, left - 8, 14,
-                Qt::AlignRight | Qt::AlignVCenter,
-                QString::number(db));
-        }
-
-        // Частотная сетка 0...6000 Гц.
-        for (int hz = 0; hz <= 6000; hz += 1000) {
-            const int x = left +
-                hz * graphWidth / 6000;
-
-            p.setPen(QColor("#263945"));
-            p.drawLine(x, top, x, bottom);
-
-            p.setPen(QColor("#9BAFBD"));
-            p.drawText(
-                x - 24, bottom + 5, 48, 18,
-                Qt::AlignHCenter | Qt::AlignTop,
-                QString::number(hz));
-        }
-
         if (spectrum.isEmpty() || sampleRate <= 0)
             return;
 
-        QPainterPath path;
-        bool started = false;
-
         const int bins = spectrum.size();
+
+        linePoints.clear();
+        if (linePoints.capacity() < graphWidth)
+            linePoints.reserve(graphWidth);
 
         for (int x = 0; x < graphWidth; ++x) {
             const float frequency =
@@ -163,39 +132,75 @@ protected:
 
             const int bin = std::clamp(
                 int(frequency * FFT_SIZE_LOCAL / sampleRate),
-                0,
-                bins - 1);
+                0, bins - 1);
 
-            const float db = std::clamp(
-                spectrum[bin], -100.0f, 0.0f);
+            const float db = std::clamp(spectrum[bin], -100.0f, 0.0f);
 
             const int y = bottom -
                 int((db + 100.0f) * graphHeight / 100.0f);
 
-            if (!started) {
-                path.moveTo(left + x, y);
-                started = true;
-            }
-            else {
-                path.lineTo(left + x, y);
-            }
+            linePoints.append(QPoint(left + x, y));
         }
 
-        // p.setPen(QPen(QColor("#00D7BA"), 1.5));
-        //p.setPen(QPen(QColor("#39FF14"), 1.5));  
+        p.setRenderHint(QPainter::Antialiasing);   // только для линии  
         p.setPen(QPen(QColor("#00FF00"), 1.5));
-        p.drawPath(path);
+        p.drawPolyline(linePoints.constData(), linePoints.size());
+    }
 
+    void rebuildGrid()
+    {
+        if (width() <= 0 || height() <= 0)
+            return;
+
+        gridCache = QPixmap(size());
+        gridCache.fill(QColor("#071017"));
+
+        QPainter p(&gridCache);
+        p.setFont(gridFont);
+
+        const int left = 52;
+        const int right = width() - 12;
+        const int top = 12;
+        const int bottom = height() - 30;
+
+        const int graphWidth = right - left;
+        const int graphHeight = bottom - top;
+
+        if (graphWidth <= 0 || graphHeight <= 0)
+            return;
+
+        // Сетка по уровню.  
+        for (int db = 0; db >= -100; db -= 20) {
+            const int y = bottom - ((db + 100) * graphHeight / 100);
+            p.setPen(QColor("#263945"));
+            p.drawLine(left, y, right, y);
+            p.setPen(QColor("#9BAFBD"));
+            p.drawText(2, y - 5, left - 8, 14,
+                Qt::AlignRight | Qt::AlignVCenter, QString::number(db));
+        }
+
+        // Частотная сетка 0...6000 Гц.  
+        for (int hz = 0; hz <= 6000; hz += 1000) {
+            const int x = left + hz * graphWidth / 6000;
+            p.setPen(QColor("#263945"));
+            p.drawLine(x, top, x, bottom);
+            p.setPen(QColor("#9BAFBD"));
+            p.drawText(x - 24, bottom + 5, 48, 18,
+                Qt::AlignHCenter | Qt::AlignTop, QString::number(hz));
+        }
+
+        // Подписи осей (статичны — тоже в кэш).  
         p.setPen(QColor("#69D8C5"));
-        p.drawText(
-            left, 1, graphWidth, 12,
-            Qt::AlignLeft | Qt::AlignVCenter,
-            "Уровень, dBFS");
+        p.drawText(left, 1, graphWidth, 12,
+            Qt::AlignLeft | Qt::AlignVCenter, "Уровень, dBFS");
+        p.drawText(left, height() - 15, graphWidth, 14,
+            Qt::AlignHCenter | Qt::AlignVCenter, "Частота, Гц");
+    }
 
-        p.drawText(
-            left, height() - 15, graphWidth, 14,
-            Qt::AlignHCenter | Qt::AlignVCenter,
-            "Частота, Гц");
+protected:
+    void resizeEvent(QResizeEvent*) override
+    {
+        rebuildGrid();
     }
 
 private:
@@ -203,6 +208,10 @@ private:
 
     QVector<float> spectrum;
     int sampleRate = 16000;
+
+    QPixmap gridCache;              // кэш фоновой сетки  
+    QVector<QPoint> linePoints;     // переиспользуемый буфер точек линии  
+    QFont gridFont{ "Segoe UI", 8 };
 };
 
 // ============================================================================
@@ -338,7 +347,7 @@ bool AudioSpectrumWidget::startCapture()
 
     // Пробуем распространённые PCM-форматы.
     const int rates[] = {
-        16000, 22050, 44100, 48000
+        44100, 48000, 22050, 16000
     };
 
     WAVEFORMATEX format{};
@@ -390,6 +399,8 @@ bool AudioSpectrumWidget::startCapture()
         std::lock_guard<std::mutex> lock(sampleMutex);
         pendingSamples.clear();
     }
+
+    spectrumAvg.clear();   // следующий кадр переинициализирует усреднение
 
     // Подготавливаем буферы и передаём их драйверу.
     for (auto& buffer : buffers) {
@@ -793,6 +804,10 @@ void AudioSpectrumWidget::updateSpectrum()
 
     spectrumDb.resize(FFT_SIZE / 2);
 
+    // При первом кадре (или смене размера) инициализируем накопитель.  
+    if (spectrumAvg.size() != FFT_SIZE / 2)
+        spectrumAvg.fill(-100.0f, FFT_SIZE / 2);
+
     for (int i = 0; i < FFT_SIZE / 2; ++i) {
         const float magnitude =
             std::abs(data[i]) * (4.0f / float(FFT_SIZE));
@@ -801,7 +816,14 @@ void AudioSpectrumWidget::updateSpectrum()
             20.0f * std::log10(
                 std::max(magnitude, 1.0e-6f));
 
-        spectrumDb[i] = std::clamp(db, -100.0f, 0.0f);
+        const float clamped = std::clamp(db, -100.0f, 0.0f);
+
+        // Экспоненциальное скользящее среднее по кадрам.  
+        spectrumAvg[i] =
+            AVG_ALPHA * clamped +
+            (1.0f - AVG_ALPHA) * spectrumAvg[i];
+
+        spectrumDb[i] = spectrumAvg[i];
     }
 
     plot->setSpectrum(spectrumDb, sampleRate);
