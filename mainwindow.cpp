@@ -998,10 +998,12 @@ void MainWindow::appendLog(const QString& text)
 
 void MainWindow::requestRadioState()  
 {  
-    enqueueCommand("FA;");  
-    enqueueCommand("MD;");  
+    enqueueCommand("FA;");
+    enqueueCommand("FA;");
+    enqueueCommand("MD;");
+    enqueueCommand("MD;");
     enqueueCommand("SL;");  
-    enqueueCommand("SH;");  
+    enqueueCommand("SH;");
 }  
   
 void MainWindow::enqueueCommand(const QString& command)  

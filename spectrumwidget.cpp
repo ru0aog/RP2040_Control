@@ -19,6 +19,7 @@
 #include <cmath>
 #include <complex>
 #include <numbers>
+#include <cstring>
 
 // ============================================================================
 // FFT: radix-2, in-place
@@ -130,10 +131,10 @@ protected:
                 QString::number(db));
         }
 
-        // Частотная сетка 0...8000 Гц.
-        for (int hz = 0; hz <= 8000; hz += 1000) {
+        // Частотная сетка 0...6000 Гц.
+        for (int hz = 0; hz <= 6000; hz += 1000) {
             const int x = left +
-                hz * graphWidth / 8000;
+                hz * graphWidth / 6000;
 
             p.setPen(QColor("#263945"));
             p.drawLine(x, top, x, bottom);
@@ -155,7 +156,7 @@ protected:
 
         for (int x = 0; x < graphWidth; ++x) {
             const float frequency =
-                8000.0f * float(x) / float(graphWidth);
+                6000.0f * float(x) / float(graphWidth);
 
             if (frequency > sampleRate / 2.0f)
                 break;
@@ -180,7 +181,8 @@ protected:
             }
         }
 
-        p.setPen(QPen(QColor("#00D7BA"), 1.5));
+        // p.setPen(QPen(QColor("#00D7BA"), 1.5));
+        p.setPen(QPen(QColor("#39FF14"), 1.5));
         p.drawPath(path);
 
         p.setPen(QColor("#69D8C5"));
@@ -217,11 +219,14 @@ AudioSpectrumWidget::AudioSpectrumWidget(QWidget* parent)
 
     deviceCombo = new QComboBox(this);
     startButton = new QPushButton("Начать захват", this);
+    playbackButton = new QPushButton("Прослушивание: выкл.", this);
+    playbackButton->setEnabled(false);
     statusLabel = new QLabel("Захват остановлен", this);
 
     controls->addWidget(new QLabel("Аудиовход:"));
     controls->addWidget(deviceCombo, 1);
     controls->addWidget(startButton);
+    controls->addWidget(playbackButton);
     controls->addWidget(statusLabel);
 
     plot = new SpectrumPlot(this);
@@ -237,6 +242,9 @@ AudioSpectrumWidget::AudioSpectrumWidget(QWidget* parent)
 
     connect(startButton, &QPushButton::clicked,
         this, &AudioSpectrumWidget::toggleCapture);
+
+    connect(playbackButton, &QPushButton::clicked,
+        this, &AudioSpectrumWidget::togglePlayback);
 
     connect(deviceCombo,
         &QComboBox::currentIndexChanged,
@@ -416,6 +424,9 @@ bool AudioSpectrumWidget::startCapture()
     }
 
     startButton->setText("Остановить");
+    playbackButton->setEnabled(true);
+    playbackButton->setText("Прослушивание: выкл.");
+
     statusLabel->setText(
         QString("Захват: %1 Гц, mono, PCM16")
         .arg(sampleRate));
@@ -431,6 +442,7 @@ bool AudioSpectrumWidget::startCapture()
 
 void AudioSpectrumWidget::stopCapture()
 {
+    stopPlayback();
     capturing = false;
     updateTimer->stop();
 
@@ -459,12 +471,136 @@ void AudioSpectrumWidget::stopCapture()
     }
 
     startButton->setText("Начать захват");
+    playbackButton->setText("Прослушивание: выкл.");
+    playbackButton->setEnabled(false);
     statusLabel->setText("Захват остановлен");
 }
 
 // ============================================================================
 // Callback Windows
 // ============================================================================
+
+void AudioSpectrumWidget::togglePlayback()
+{
+    if (playbackEnabled.load()) {
+        stopPlayback();
+        playbackButton->setText("Прослушивание: выкл.");
+        return;
+    }
+
+    if (!capturing.load()) {
+        return;
+    }
+
+    if (!startPlayback()) {
+        QMessageBox::warning(
+            this,
+            "Воспроизведение аудио",
+            "Не удалось открыть устройство вывода Windows.");
+        return;
+    }
+
+    playbackButton->setText("Прослушивание: вкл.");
+}
+
+bool AudioSpectrumWidget::startPlayback()
+{
+    std::lock_guard<std::mutex> lock(playbackMutex);
+
+    if (waveOut)
+        return true;
+
+    if (!capturing.load())
+        return false;
+
+    WAVEFORMATEX format{};
+    format.wFormatTag = WAVE_FORMAT_PCM;
+    format.nChannels = 1;
+    format.nSamplesPerSec = DWORD(sampleRate);
+    format.wBitsPerSample = 16;
+    format.nBlockAlign = 2;
+    format.nAvgBytesPerSec = DWORD(sampleRate) * 2;
+    format.cbSize = 0;
+
+    MMRESULT result = waveOutOpen(
+        &waveOut,
+        WAVE_MAPPER,
+        &format,
+        reinterpret_cast<DWORD_PTR>(
+            &AudioSpectrumWidget::waveOutCallback),
+        reinterpret_cast<DWORD_PTR>(this),
+        CALLBACK_FUNCTION);
+
+    if (result != MMSYSERR_NOERROR) {
+        waveOut = nullptr;
+        return false;
+    }
+
+    for (auto& buffer : playbackBuffers) {
+        buffer.header = {};
+        buffer.header.lpData = buffer.data.data();
+        buffer.header.dwBufferLength =
+            DWORD(buffer.data.size());
+
+        result = waveOutPrepareHeader(
+            waveOut,
+            &buffer.header,
+            sizeof(WAVEHDR));
+
+        if (result != MMSYSERR_NOERROR) {
+            for (auto& preparedBuffer : playbackBuffers) {
+                if (preparedBuffer.prepared) {
+                    waveOutUnprepareHeader(
+                        waveOut,
+                        &preparedBuffer.header,
+                        sizeof(WAVEHDR));
+
+                    preparedBuffer.prepared = false;
+                }
+            }
+
+            waveOutClose(waveOut);
+            waveOut = nullptr;
+            return false;
+        }
+
+        buffer.prepared = true;
+        buffer.busy.store(false);
+    }
+
+    playbackEnabled.store(true);
+    return true;
+}
+
+void AudioSpectrumWidget::stopPlayback()
+{
+    // Запрещаем отправку новых буферов.
+    playbackEnabled.store(false);
+
+    std::lock_guard<std::mutex> lock(playbackMutex);
+
+    if (!waveOut)
+        return;
+
+    // Останавливаем очередь и возвращаем все буферы.
+    waveOutReset(waveOut);
+
+    for (auto& buffer : playbackBuffers) {
+        if (buffer.prepared) {
+            waveOutUnprepareHeader(
+                waveOut,
+                &buffer.header,
+                sizeof(WAVEHDR));
+
+            buffer.prepared = false;
+        }
+
+        buffer.busy.store(false);
+    }
+
+    waveOutClose(waveOut);
+    waveOut = nullptr;
+}
 
 void CALLBACK AudioSpectrumWidget::waveInCallback(
     HWAVEIN,
@@ -486,35 +622,101 @@ void CALLBACK AudioSpectrumWidget::waveInCallback(
         self->handleWaveBuffer(header);
 }
 
+void CALLBACK AudioSpectrumWidget::waveOutCallback(
+    HWAVEOUT,
+    UINT message,
+    DWORD_PTR instance,
+    DWORD_PTR param1,
+    DWORD_PTR)
+{
+    if (message != WOM_DONE || instance == 0 || param1 == 0)
+        return;
+
+    auto* self =
+        reinterpret_cast<AudioSpectrumWidget*>(instance);
+
+    auto* header =
+        reinterpret_cast<WAVEHDR*>(param1);
+
+    for (auto& buffer : self->playbackBuffers) {
+        if (&buffer.header == header) {
+            buffer.busy.store(false);
+            return;
+        }
+    }
+}
+
 void AudioSpectrumWidget::handleWaveBuffer(WAVEHDR* header)
 {
     if (!header)
         return;
 
-    if (capturing && header->dwBytesRecorded > 0) {
+    if (capturing.load() && header->dwBytesRecorded > 0) {
         const auto* samples =
             reinterpret_cast<const qint16*>(header->lpData);
 
         const int count =
             int(header->dwBytesRecorded / sizeof(qint16));
 
-        std::lock_guard<std::mutex> lock(sampleMutex);
+        // Сохраняем отсчёты для существующего анализатора спектра.
+        {
+            std::lock_guard<std::mutex> lock(sampleMutex);
 
-        for (int i = 0; i < count; ++i)
-            pendingSamples.append(samples[i]);
+            for (int i = 0; i < count; ++i)
+                pendingSamples.append(samples[i]);
 
-        // Не позволяем очереди расти бесконечно.
-        constexpr int MAX_PENDING = 32768;
+            constexpr int MAX_PENDING = 32768;
 
-        if (pendingSamples.size() > MAX_PENDING) {
-            const int excess =
-                pendingSamples.size() - MAX_PENDING;
+            if (pendingSamples.size() > MAX_PENDING) {
+                const int excess =
+                    pendingSamples.size() - MAX_PENDING;
 
-            pendingSamples.remove(0, excess);
+                pendingSamples.remove(0, excess);
+            }
+        }
+
+        // Отправляем копию отсчётов на устройство вывода Windows.
+        if (playbackEnabled.load()) {
+            std::lock_guard<std::mutex> lock(playbackMutex);
+
+            if (playbackEnabled.load() && waveOut) {
+                for (auto& buffer : playbackBuffers) {
+                    bool expected = false;
+
+                    // Захватываем только свободный выходной буфер.
+                    if (!buffer.busy.compare_exchange_strong(
+                        expected, true)) {
+                        continue;
+                    }
+
+                    const DWORD bytes = std::min<DWORD>(
+                        header->dwBytesRecorded,
+                        DWORD(buffer.data.size()));
+
+                    std::memcpy(
+                        buffer.data.data(),
+                        header->lpData,
+                        bytes);
+
+                    buffer.header.dwBufferLength = bytes;
+
+                    const MMRESULT result = waveOutWrite(
+                        waveOut,
+                        &buffer.header,
+                        sizeof(WAVEHDR));
+
+                    if (result != MMSYSERR_NOERROR)
+                        buffer.busy.store(false);
+
+                    // Один входной блок — один выходной буфер.
+                    break;
+                }
+            }
         }
     }
 
-    if (capturing && waveIn) {
+    // Возвращаем входной буфер драйверу записи.
+    if (capturing.load() && waveIn) {
         header->dwBytesRecorded = 0;
 
         waveInAddBuffer(
