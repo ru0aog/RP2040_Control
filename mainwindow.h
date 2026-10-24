@@ -1,10 +1,11 @@
 #pragma once
 
-#include <QMainWindow>
-#include <QString>
-#include <QByteArray>
-#include <windows.h>
-#include <atomic>
+#include <QMainWindow>  
+#include <QString>  
+#include <QByteArray>  
+#include <QQueue>  
+#include <windows.h>  
+#include <atomic>  
 #include <thread>
 
 class QComboBox;
@@ -41,8 +42,10 @@ private:
     void appendLog(const QString& text);
     void readerLoop(HANDLE handle);
     void closePort();
-    void sendRawCommand(const QString& command);
-    void processReceived(const QByteArray& data);
+    void sendRawCommand(const QString& command);  
+    void enqueueCommand(const QString& command);  
+    void sendNextQueued();  
+    void processReceived(const QByteArray& data);  
     void requestRadioState();
     void updateFrequency(quint32 hz);
     void updateMode(int mode);
@@ -63,8 +66,10 @@ private:
     BandwidthSlider* bandwidthSlider = nullptr;
     AudioSpectrumWidget* audioSpectrumWidget = nullptr;
 
-    QButtonGroup* modeGroup = nullptr;
-    QTimer* pollTimer = nullptr;
+    QButtonGroup* modeGroup = nullptr;  
+    QTimer* pollTimer = nullptr;  
+    QTimer* txTimer = nullptr;  
+    QQueue<QByteArray> commandQueue;
 
     HANDLE serialHandle = INVALID_HANDLE_VALUE;
     std::atomic<bool> readerRunning{ false };
