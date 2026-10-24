@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include <QMainWindow>
@@ -17,6 +16,7 @@ class QTimer;
 class QButtonGroup;
 class FrequencyDisplay;
 class BandwidthSlider;
+class AudioSpectrumWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -42,7 +42,7 @@ private:
     void readerLoop(HANDLE handle);
     void closePort();
     void sendRawCommand(const QString& command);
-    void processReceived(const QString& text);
+    void processReceived(const QByteArray& data);
     void requestRadioState();
     void updateFrequency(quint32 hz);
     void updateMode(int mode);
@@ -61,6 +61,8 @@ private:
 
     FrequencyDisplay* frequencyDisplay = nullptr;
     BandwidthSlider* bandwidthSlider = nullptr;
+    AudioSpectrumWidget* audioSpectrumWidget = nullptr;
+
     QButtonGroup* modeGroup = nullptr;
     QTimer* pollTimer = nullptr;
 

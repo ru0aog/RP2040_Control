@@ -4,11 +4,11 @@
 #endif
 
 #include "mainwindow.h"
+#include "spectrumwidget.h"
 
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QGridLayout>
 #include <QGroupBox>
 #include <QDateTime>
 #include <QScrollBar>
@@ -22,21 +22,23 @@
 #include <QTimer>
 #include <QButtonGroup>
 #include <QAbstractButton>
-#include <QDial>
 #include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QFontMetrics>
 #include <QSignalBlocker>
+#include <QApplication>
+#include <QClipboard>
+#include <QTextCursor>
+
 #include <algorithm>
 #include <cmath>
 #include <functional>
 #include <iterator>
 #include <utility>
 
-
 // ============================================================================
-// Индикатор частоты: клик выбирает разряд, колесо изменяет частоту.
+// Индикатор частоты: клик выбирает разряд, колесо мыши изменяет частоту.
 // ============================================================================
 
 class FrequencyDisplay : public QWidget
@@ -88,7 +90,6 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
         p.fillRect(rect(), QColor("#071017"));
 
-        // Всегда восемь цифр, например 03600000.
         const QString digits =
             QString("%1").arg(frequency, 8, 10, QChar('0'));
 
@@ -111,7 +112,8 @@ protected:
             if (i == selectedDigit) {
                 p.setPen(Qt::NoPen);
                 p.setBrush(QColor("#00BFA5"));
-                p.drawRoundedRect(r.adjusted(1, 0, -1, 0), 5, 5);
+                p.drawRoundedRect(
+                    r.adjusted(1, 0, -1, 0), 5, 5);
             }
 
             p.setPen(i == selectedDigit
@@ -157,6 +159,44 @@ protected:
         QWidget::mousePressEvent(e);
     }
 
+    void mouseDoubleClickEvent(QMouseEvent* e) override
+    {
+        if (e->button() != Qt::LeftButton) {
+            QWidget::mouseDoubleClickEvent(e);
+            return;
+        }
+
+        const QFont font("Consolas", 34, QFont::DemiBold);
+        const QFontMetrics fm(font);
+
+        const int charWidth = fm.horizontalAdvance('0');
+        const int totalWidth = charWidth * 8;
+        const int startX = (width() - totalWidth) / 2;
+        const int x = static_cast<int>(e->position().x());
+
+        if (x >= startX && x < startX + totalWidth) {
+            const int digit = (x - startX) / charWidth;
+
+            if (digit >= 0 && digit < 8) {
+                selectedDigit = digit;
+
+                // Обнуляем выбранный разряд и все разряды справа.
+                const int step = steps[digit];
+                frequency = (frequency / (step * 10)) * (step * 10);
+
+                if (frequencyCallback)
+                    frequencyCallback(frequency);
+
+                if (stepCallback)
+                    stepCallback(getStep());
+
+                update();
+            }
+        }
+
+        e->accept();
+    }
+
     void wheelEvent(QWheelEvent* e) override
     {
         const int delta = e->angleDelta().y();
@@ -184,13 +224,11 @@ protected:
 private:
     quint32 frequency = 3600000;
 
-    // Слева направо: 10 МГц, 1 МГц, 100 кГц ... 1 Гц.
     const int steps[8] = {
         10000000, 1000000, 100000, 10000,
         1000, 100, 10, 1
     };
 
-    // Начальный шаг настройки — 100 Гц.
     int selectedDigit = 5;
 
     std::function<void(quint32)> frequencyCallback;
@@ -304,7 +342,6 @@ protected:
         const int xl = xForValue(lo);
         const int xh = xForValue(hi);
 
-        // Выбираем ближайший маркер.
         dragLow = std::abs(x - xl) <= std::abs(x - xh);
         dragging = true;
 
@@ -432,24 +469,7 @@ MainWindow::MainWindow(QWidget* parent)
     freqLayout->addWidget(stepLabel);
     freqLayout->addLayout(directLayout);
 
-    // Круглая ручка настройки.
-    auto* tuningGroup = new QGroupBox("Ручка настройки");
-    auto* tuningLayout = new QHBoxLayout(tuningGroup);
-
-    auto* dial = new QDial();
-    dial->setRange(-100, 100);
-    dial->setValue(0);
-    dial->setNotchesVisible(true);
-    dial->setWrapping(false);
-    dial->setFixedSize(130, 130);
-
-    auto* dialInfo = new QLabel(
-        "Вращай ручку мышью.\n"
-        "Шаг соответствует выбранному разряду.");
-    dialInfo->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-
-    tuningLayout->addWidget(dial);
-    tuningLayout->addWidget(dialInfo, 1);
+    // Ручка настройки полностью удалена.
 
     // Режимы демодуляции.
     auto* modeGroupBox = new QGroupBox("Режим демодуляции");
@@ -511,10 +531,24 @@ MainWindow::MainWindow(QWidget* parent)
 
     filterLayout->addWidget(bandwidthLabel);
     filterLayout->addWidget(bandwidthSlider);
+
+    // Аудиовход и спектр 0–8000 Гц.
+    audioSpectrumWidget = new AudioSpectrumWidget(filterGroup);
+    filterLayout->addWidget(audioSpectrumWidget);
+
     filterLayout->addLayout(filterEditLayout);
 
     // Журнал CAT.
     auto* logLabel = new QLabel("Журнал обмена TX / RX");
+
+    auto* copyLogButton = new QPushButton("Копировать лог");
+    auto* clearLogButton = new QPushButton("Очистить лог");
+
+    auto* logHeaderLayout = new QHBoxLayout();
+    logHeaderLayout->addWidget(logLabel);
+    logHeaderLayout->addStretch();
+    logHeaderLayout->addWidget(copyLogButton);
+    logHeaderLayout->addWidget(clearLogButton);
 
     logView = new QPlainTextEdit();
     logView->setReadOnly(true);
@@ -535,10 +569,9 @@ MainWindow::MainWindow(QWidget* parent)
     mainLayout->addWidget(title);
     mainLayout->addLayout(portLayout);
     mainLayout->addWidget(freqGroup);
-    mainLayout->addWidget(tuningGroup);
     mainLayout->addWidget(modeGroupBox);
     mainLayout->addWidget(filterGroup);
-    mainLayout->addWidget(logLabel);
+    mainLayout->addLayout(logHeaderLayout);
     mainLayout->addWidget(logView, 1);
     mainLayout->addLayout(cmdLayout);
 
@@ -634,92 +667,94 @@ MainWindow::MainWindow(QWidget* parent)
     connect(commandEdit, &QLineEdit::returnPressed,
         this, &MainWindow::sendCommand);
 
+    // Копировать весь журнал в буфер обмена.
+    connect(copyLogButton, &QPushButton::clicked,
+        this, [this]() {
+            QApplication::clipboard()->setText(logView->toPlainText());
+        });
+
+    // Очистить журнал.
+    connect(clearLogButton, &QPushButton::clicked,
+        this, [this]() {
+            logView->clear();
+        });
+
+    auto setFrequency = [this, frequencyEdit]() {
+        bool ok = false;
+        const quint32 hz =
+            frequencyEdit->text().trimmed().toUInt(&ok);
+
+        if (!ok || hz == 0 || hz > 99999999) {
+            QMessageBox::warning(
+                this,
+                "Частота",
+                "Введи корректную частоту от 1 до 99999999 Гц.");
+
+            frequencyEdit->setFocus();
+            frequencyEdit->selectAll();
+            return;
+        }
+
+        currentFrequency = hz;
+        frequencyDisplay->setFrequency(hz);
+        sendFrequency();
+
+        frequencyEdit->setText(QString::number(hz));
+        frequencyEdit->setModified(false);
+        };
+
     connect(setFrequencyButton, &QPushButton::clicked,
-        this, [this, frequencyEdit]() {
-            bool ok = false;
-            const quint32 hz =
-                frequencyEdit->text().trimmed().toUInt(&ok);
+        this, setFrequency);
 
-            if (!ok || hz == 0 || hz > 99999999) {
-                QMessageBox::warning(
-                    this,
-                    "Частота",
-                    "Введи корректную частоту от 1 до 99999999 Гц.");
-                return;
-            }
+    connect(frequencyEdit, &QLineEdit::returnPressed,
+        this, setFrequency);
 
-            currentFrequency = hz;
-            frequencyDisplay->setFrequency(hz);
-            sendFrequency();
-            frequencyEdit->setModified(false);
-        });
-
-    connect(dial, &QDial::valueChanged,
-        this, [this, dial](int value) {
-            // Учитываем изменение положения, а не весь путь от нуля
-            // при каждом событии valueChanged.
-            static int previousDialValue = 0;
-
-            const int delta = value - previousDialValue;
-            previousDialValue = value;
-
-            if (delta == 0)
-                return;
-
-            const qint64 hz =
-                qint64(currentFrequency) + qint64(delta) * tuningStep;
-
-            currentFrequency = quint32(
-                std::clamp<qint64>(hz, 1, 99999999));
-
-            frequencyDisplay->setFrequency(currentFrequency);
-
-            auto* edit = findChild<QLineEdit*>("frequencyEdit");
-            if (edit && !edit->hasFocus())
-                edit->setText(QString::number(currentFrequency));
-        });
-
-    connect(dial, &QDial::sliderReleased,
-        this, [this, dial]() {
-            sendFrequency();
-            dial->setValue(0);
-        });
+    // Обработчики QDial удалены вместе с самой ручкой.
 
     connect(modeGroup, &QButtonGroup::idClicked,
         this, &MainWindow::changeMode);
 
+    auto setBand = [this, lowEdit, highEdit]() {
+        bool okLow = false;
+        bool okHigh = false;
+
+        const int lo = lowEdit->text().trimmed().toInt(&okLow);
+        const int hi = highEdit->text().trimmed().toInt(&okHigh);
+
+        if (!okLow || !okHigh ||
+            lo < 0 || hi > 5000 || lo >= hi) {
+            QMessageBox::warning(
+                this,
+                "Полоса фильтра",
+                "Нужны значения 0–5000 Гц, "
+                "нижняя граница меньше верхней.");
+
+            return;
+        }
+
+        lowCutHz = lo;
+        highCutHz = hi;
+
+        bandwidthSlider->setBand(lo, hi);
+        updateBand(lo, hi);
+        sendLowCut(lo);
+        sendHighCut(hi);
+
+        lowEdit->setText(QString::number(lo));
+        highEdit->setText(QString::number(hi));
+        };
+
     connect(setBandButton, &QPushButton::clicked,
-        this, [this, lowEdit, highEdit]() {
-            bool okLow = false;
-            bool okHigh = false;
+        this, setBand);
 
-            const int lo = lowEdit->text().toInt(&okLow);
-            const int hi = highEdit->text().toInt(&okHigh);
+    connect(lowEdit, &QLineEdit::returnPressed,
+        this, setBand);
 
-            if (!okLow || !okHigh ||
-                lo < 0 || hi > 5000 || lo >= hi) {
-                QMessageBox::warning(
-                    this,
-                    "Полоса фильтра",
-                    "Нужны значения 0–5000 Гц, "
-                    "нижняя граница меньше верхней.");
-                return;
-            }
+    connect(highEdit, &QLineEdit::returnPressed,
+        this, setBand);
 
-            lowCutHz = lo;
-            highCutHz = hi;
-
-            bandwidthSlider->setBand(lo, hi);
-            updateBand(lo, hi);
-            sendLowCut(lo);
-            sendHighCut(hi);
-        });
-
-    pollTimer = new QTimer(this);
-    pollTimer->setInterval(3000);
-
-    connect(pollTimer, &QTimer::timeout,
-        this, &MainWindow::pollRadio);
+    // Периодический опрос отключён.
+    pollTimer = nullptr;
 
     refreshPorts();
 }
@@ -772,6 +807,7 @@ void MainWindow::toggleConnection()
         return;
     }
 
+    // Правильный путь Windows: \\.\COM3
     const QString device =
         "\\\\.\\" + portCombo->currentText();
 
@@ -831,7 +867,6 @@ void MainWindow::toggleConnection()
     readerThread = std::thread(&MainWindow::readerLoop, this, handle);
 
     requestRadioState();
-    pollTimer->start();
 }
 
 void MainWindow::sendCommand()
@@ -897,14 +932,15 @@ void MainWindow::readerLoop(HANDLE handle)
         }
 
         if (received > 0) {
-            const QString text = QString::fromLatin1(
-                QByteArray(buffer, int(received)));
+            const QByteArray data(buffer, int(received));
 
             QMetaObject::invokeMethod(
                 this,
-                [this, text]() {
-                    appendLog("[RX] " + text);
-                    processReceived(text);
+                [this, data]() {
+                    processReceived(data);
+
+                    // Отдельно декодируем принятые данные для журнала.
+                    appendLog("[RX] " + QString::fromUtf8(data));
                 },
                 Qt::QueuedConnection);
         }
@@ -913,15 +949,11 @@ void MainWindow::readerLoop(HANDLE handle)
 
 void MainWindow::closePort()
 {
-    if (pollTimer)
-        pollTimer->stop();
-
     readerRunning = false;
 
     if (serialHandle != INVALID_HANDLE_VALUE)
         CancelIoEx(serialHandle, nullptr);
 
-    // Не закрываем handle до завершения потока чтения.
     if (readerThread.joinable())
         readerThread.join();
 
@@ -967,10 +999,9 @@ void MainWindow::pollRadio()
     requestRadioState();
 }
 
-void MainWindow::processReceived(const QString& text)
+void MainWindow::processReceived(const QByteArray& data)
 {
-    // Ответы могут приходить фрагментами; собираем их до ';'.
-    rxPending += text.toLatin1();
+    rxPending += data;
 
     while (true) {
         const int pos = rxPending.indexOf(';');
@@ -1027,7 +1058,6 @@ void MainWindow::updateFrequency(quint32 hz)
 
     auto* edit = findChild<QLineEdit*>("frequencyEdit");
 
-    // Не перезаписываем значение, пока пользователь редактирует поле.
     if (edit && !edit->hasFocus())
         edit->setText(QString::number(hz));
 }
@@ -1055,7 +1085,6 @@ void MainWindow::updateBand(int low, int high)
     auto* lowEdit = findChild<QLineEdit*>("lowEdit");
     auto* highEdit = findChild<QLineEdit*>("highEdit");
 
-    // Не сбрасываем текст, который пользователь сейчас вводит.
     if (lowEdit && !lowEdit->hasFocus())
         lowEdit->setText(QString::number(low));
 
@@ -1067,10 +1096,10 @@ void MainWindow::sendFrequency()
 {
     sendRawCommand(
         QString("FA%1;").arg(currentFrequency, 11, 10, QChar('0')));
-
-    sendRawCommand("FA;");
 }
 
+// Оставлено для совместимости с объявлением в mainwindow.h.
+// Круглая ручка настройки больше не создаётся и этот метод не вызывает.
 void MainWindow::tuneFrequency(int direction)
 {
     const qint64 hz =
@@ -1096,7 +1125,6 @@ void MainWindow::changeMode(int mode)
     currentMode = mode;
 
     sendRawCommand(QString("MD%1;").arg(mode));
-    sendRawCommand("MD;");
 }
 
 void MainWindow::sendLowCut(int hz)
