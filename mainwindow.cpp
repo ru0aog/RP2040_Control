@@ -30,6 +30,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QTextCursor>
+#include <QQueue>
 
 #include <algorithm>
 #include <cmath>
@@ -756,6 +757,13 @@ MainWindow::MainWindow(QWidget* parent)
     // Периодический опрос отключён.
     pollTimer = nullptr;
 
+    // Таймер последовательной отправки CAT-команд с паузой,  
+    // чтобы приёмник успевал ответить на каждый запрос.  
+    txTimer = new QTimer(this);  
+    txTimer->setInterval(200);  
+    connect(txTimer, &QTimer::timeout,  
+    this, &MainWindow::sendNextQueued);
+
     refreshPorts();
 }
 
@@ -947,11 +955,16 @@ void MainWindow::readerLoop(HANDLE handle)
     }
 }
 
-void MainWindow::closePort()
-{
-    readerRunning = false;
-
-    if (serialHandle != INVALID_HANDLE_VALUE)
+void MainWindow::closePort()  
+{  
+    readerRunning = false;  
+  
+    if (txTimer)  
+        txTimer->stop();  
+  
+    commandQueue.clear();  
+  
+    if (serialHandle != INVALID_HANDLE_VALUE)  
         CancelIoEx(serialHandle, nullptr);
 
     if (readerThread.joinable())
@@ -983,12 +996,41 @@ void MainWindow::appendLog(const QString& text)
         logView->verticalScrollBar()->maximum());
 }
 
-void MainWindow::requestRadioState()
-{
-    sendRawCommand("FA;");
-    sendRawCommand("MD;");
-    sendRawCommand("SL;");
-    sendRawCommand("SH;");
+void MainWindow::requestRadioState()  
+{  
+    enqueueCommand("FA;");  
+    enqueueCommand("MD;");  
+    enqueueCommand("SL;");  
+    enqueueCommand("SH;");  
+}  
+  
+void MainWindow::enqueueCommand(const QString& command)  
+{  
+    if (serialHandle == INVALID_HANDLE_VALUE) {  
+        appendLog("[ERR] Сначала подключись к приёмнику.");  
+        return;  
+    }  
+  
+    commandQueue.enqueue(command.toLatin1());  
+  
+    // Если очередь только что ожила — отправляем первую команду  
+    // сразу, остальные уйдут по тикам таймера.  
+    if (!txTimer->isActive()) {  
+        sendNextQueued();  
+        txTimer->start();  
+    }  
+}  
+  
+void MainWindow::sendNextQueued()  
+{  
+    if (commandQueue.isEmpty() ||  
+        serialHandle == INVALID_HANDLE_VALUE) {  
+        txTimer->stop();  
+        commandQueue.clear();  
+        return;  
+    }  
+  
+    sendRawCommand(QString::fromLatin1(commandQueue.dequeue()));  
 }
 
 void MainWindow::pollRadio()
