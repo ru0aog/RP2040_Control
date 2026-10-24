@@ -529,6 +529,17 @@ MainWindow::MainWindow(QWidget* parent)
     auto* normalButton = new QPushButton("Норм");
     auto* wideButton = new QPushButton("Широкая");
 
+    auto* ntButton = new QPushButton("NT");
+    ntButton->setCheckable(true);
+    ntButton->setMinimumHeight(38);
+
+    auto* nrButton = new QPushButton("NR");
+    nrButton->setCheckable(true);
+    nrButton->setMinimumHeight(38);
+
+    filterEditLayout->addWidget(ntButton);
+    filterEditLayout->addWidget(nrButton);
+    filterEditLayout->addStretch();
     filterEditLayout->addWidget(new QLabel("ФВЧ, Гц:"));
     filterEditLayout->addWidget(lowEdit);
     filterEditLayout->addSpacing(20);
@@ -778,6 +789,16 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(wideButton, &QPushButton::clicked,
         this, [applyBand]() { applyBand(0, 3100); });
+
+    connect(ntButton, &QPushButton::toggled,
+        this, [this](bool on) {
+            sendRawCommand(on ? "NT1;" : "NT0;");
+        });
+
+    connect(nrButton, &QPushButton::toggled,
+        this, [this](bool on) {
+            sendRawCommand(on ? "NR1;" : "NR0;");
+        });
 
     connect(lowEdit, &QLineEdit::returnPressed,
         this, setBand);

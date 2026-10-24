@@ -245,6 +245,27 @@ AudioSpectrumWidget::AudioSpectrumWidget(QWidget* parent)
     volumeSlider->setRange(0, 100);
     volumeSlider->setValue(80);
     volumeSlider->setToolTip("Громкость прослушивания");
+    volumeSlider->setStyleSheet(R"(  
+        QSlider::groove:vertical {  
+            width: 8px;  
+            background: #344955;  
+            border-radius: 4px;  
+        }  
+        QSlider::add-page:vertical {  
+            background: #69D8C5;  
+            border-radius: 4px;  
+        }  
+        QSlider::sub-page:vertical {  
+            background: #344955;  
+            border-radius: 4px;  
+        }  
+        QSlider::handle:vertical {  
+            background: #E6EDF3;  
+            height: 16px;  
+            margin: 0 -5px;  
+            border-radius: 8px;  
+        }  
+    )");
 
     auto* plotRow = new QHBoxLayout();
     plotRow->addWidget(plot, 1);
