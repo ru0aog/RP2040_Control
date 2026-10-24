@@ -525,7 +525,9 @@ MainWindow::MainWindow(QWidget* parent)
     highEdit->setObjectName("highEdit");
     highEdit->setMaximumWidth(100);
 
-    auto* setBandButton = new QPushButton("Установить границы");
+    auto* narrowButton = new QPushButton("Узкая");
+    auto* normalButton = new QPushButton("Норм");
+    auto* wideButton = new QPushButton("Широкая");
 
     filterEditLayout->addWidget(new QLabel("ФВЧ, Гц:"));
     filterEditLayout->addWidget(lowEdit);
@@ -533,7 +535,9 @@ MainWindow::MainWindow(QWidget* parent)
     filterEditLayout->addWidget(new QLabel("ФНЧ, Гц:"));
     filterEditLayout->addWidget(highEdit);
     filterEditLayout->addStretch();
-    filterEditLayout->addWidget(setBandButton);
+    filterEditLayout->addWidget(narrowButton);
+    filterEditLayout->addWidget(normalButton);
+    filterEditLayout->addWidget(wideButton);
 
     filterLayout->addWidget(bandwidthLabel);
     filterLayout->addWidget(bandwidthSlider);
@@ -753,8 +757,27 @@ MainWindow::MainWindow(QWidget* parent)
         highEdit->setText(QString::number(hi));
         };
 
-    connect(setBandButton, &QPushButton::clicked,
-        this, setBand);
+    auto applyBand = [this, lowEdit, highEdit](int lo, int hi) {
+        lowCutHz = lo;
+        highCutHz = hi;
+
+        bandwidthSlider->setBand(lo, hi);
+        updateBand(lo, hi);
+        sendLowCut(lo);
+        sendHighCut(hi);
+
+        lowEdit->setText(QString::number(lo));
+        highEdit->setText(QString::number(hi));
+        };
+
+    connect(narrowButton, &QPushButton::clicked,
+        this, [applyBand]() { applyBand(300, 2200); });
+
+    connect(normalButton, &QPushButton::clicked,
+        this, [applyBand]() { applyBand(100, 2700); });
+
+    connect(wideButton, &QPushButton::clicked,
+        this, [applyBand]() { applyBand(0, 3100); });
 
     connect(lowEdit, &QLineEdit::returnPressed,
         this, setBand);
