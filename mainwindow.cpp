@@ -474,7 +474,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Режимы демодуляции.
     auto* modeGroupBox = new QGroupBox("Режим демодуляции");
-    auto* modeLayout = new QHBoxLayout(modeGroupBox);
+    auto* modeLayout = new QVBoxLayout(modeGroupBox);
 
     modeGroup = new QButtonGroup(this);
     modeGroup->setExclusive(true);
@@ -497,7 +497,12 @@ MainWindow::MainWindow(QWidget* parent)
         button->setProperty("radioMode", item.mode);
 
         modeGroup->addButton(button, item.mode);
-        modeLayout->addWidget(button);
+
+        auto* row = new QHBoxLayout();
+        row->addStretch(15);
+        row->addWidget(button, 70);
+        row->addStretch(15);
+        modeLayout->addLayout(row);
     }
 
     // Фильтр.
@@ -567,10 +572,13 @@ MainWindow::MainWindow(QWidget* parent)
     cmdLayout->addWidget(commandEdit, 1);
     cmdLayout->addWidget(sendButton);
 
+    auto* topRow = new QHBoxLayout();
+    topRow->addWidget(freqGroup, 5);
+    topRow->addWidget(modeGroupBox, 2);
+
     mainLayout->addWidget(title);
     mainLayout->addLayout(portLayout);
-    mainLayout->addWidget(freqGroup);
-    mainLayout->addWidget(modeGroupBox);
+    mainLayout->addLayout(topRow);
     mainLayout->addWidget(filterGroup);
     mainLayout->addLayout(logHeaderLayout);
     mainLayout->addWidget(logView, 1);
@@ -765,6 +773,17 @@ MainWindow::MainWindow(QWidget* parent)
     this, &MainWindow::sendNextQueued);
 
     refreshPorts();
+
+    // Автоподключение при запуске: подключаемся к выбранному  
+    // COM-порту, если это не COM1, и сразу запускаем захват звука.  
+    const QString autoPort = portCombo->currentText();
+
+    if (!autoPort.isEmpty() && autoPort != "COM1") {
+        toggleConnection();
+
+        if (serialHandle != INVALID_HANDLE_VALUE && audioSpectrumWidget)
+            audioSpectrumWidget->startCaptureIfIdle();
+    }
 }
 
 MainWindow::~MainWindow()

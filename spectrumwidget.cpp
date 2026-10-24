@@ -80,7 +80,7 @@ public:
     explicit SpectrumPlot(QWidget* parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumHeight(180);
+        setMinimumHeight(320);
         setSizePolicy(
             QSizePolicy::Expanding,
             QSizePolicy::Expanding);
@@ -117,9 +117,9 @@ protected:
         // Сетка по уровню.
         p.setFont(QFont("Segoe UI", 8));
 
-        for (int db = 0; db >= -120; db -= 20) {
+        for (int db = 0; db >= -100; db -= 20) {
             const int y = bottom -
-                ((db + 120) * graphHeight / 120);
+                ((db + 100) * graphHeight / 100);
 
             p.setPen(QColor("#263945"));
             p.drawLine(left, y, right, y);
@@ -167,10 +167,10 @@ protected:
                 bins - 1);
 
             const float db = std::clamp(
-                spectrum[bin], -120.0f, 0.0f);
+                spectrum[bin], -100.0f, 0.0f);
 
             const int y = bottom -
-                int((db + 120.0f) * graphHeight / 120.0f);
+                int((db + 100.0f) * graphHeight / 100.0f);
 
             if (!started) {
                 path.moveTo(left + x, y);
@@ -182,7 +182,8 @@ protected:
         }
 
         // p.setPen(QPen(QColor("#00D7BA"), 1.5));
-        p.setPen(QPen(QColor("#39FF14"), 1.5));
+        //p.setPen(QPen(QColor("#39FF14"), 1.5));  
+        p.setPen(QPen(QColor("#00FF00"), 1.5));
         p.drawPath(path);
 
         p.setPen(QColor("#69D8C5"));
@@ -319,6 +320,12 @@ void AudioSpectrumWidget::toggleCapture()
             "Не удалось открыть устройство записи.\n"
             "Проверь настройки Windows и подключение устройства.");
     }
+}
+
+void AudioSpectrumWidget::startCaptureIfIdle()
+{
+    if (!capturing && startButton->isEnabled())
+        toggleCapture();
 }
 
 bool AudioSpectrumWidget::startCapture()
@@ -788,13 +795,13 @@ void AudioSpectrumWidget::updateSpectrum()
 
     for (int i = 0; i < FFT_SIZE / 2; ++i) {
         const float magnitude =
-            std::abs(data[i]) * (2.0f / float(FFT_SIZE));
+            std::abs(data[i]) * (4.0f / float(FFT_SIZE));
 
         const float db =
             20.0f * std::log10(
                 std::max(magnitude, 1.0e-6f));
 
-        spectrumDb[i] = std::clamp(db, -120.0f, 0.0f);
+        spectrumDb[i] = std::clamp(db, -100.0f, 0.0f);
     }
 
     plot->setSpectrum(spectrumDb, sampleRate);

@@ -34,6 +34,8 @@ public:
     explicit AudioSpectrumWidget(QWidget* parent = nullptr);
     ~AudioSpectrumWidget() override;
 
+    void startCaptureIfIdle();
+
 private:
     static void CALLBACK waveInCallback(
         HWAVEIN hwi,
