@@ -1,4 +1,8 @@
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include "mainwindow.h"
 
 #include <QWidget>
@@ -17,21 +21,19 @@
 #include <QLabel>
 #include <QTimer>
 #include <QButtonGroup>
-#include <QRadioButton>
+#include <QAbstractButton>
 #include <QDial>
 #include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
-#include <QInputDialog>
-#include <QRegularExpression>
+#include <QFontMetrics>
 #include <QSignalBlocker>
-#include <QFontDatabase>
-#include <QStyle>
-#include <QApplication>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iterator>
-#include <algorithm>
+#include <utility>
+
 
 // ============================================================================
 // Индикатор частоты: клик выбирает разряд, колесо изменяет частоту.
@@ -46,7 +48,8 @@ public:
         setMinimumHeight(105);
         setMouseTracking(true);
         setFocusPolicy(Qt::StrongFocus);
-        setToolTip("Клик по цифре выбирает шаг; колесо мыши меняет частоту");
+        setToolTip(
+            "Клик по цифре выбирает шаг; колесо мыши меняет частоту");
     }
 
     void setFrequency(quint32 hz)
@@ -55,8 +58,18 @@ public:
         update();
     }
 
-    quint32 getFrequency() const { return frequency; }
-    int getStep() const { return steps[selectedDigit]; }
+    quint32 getFrequency() const
+    {
+        return frequency;
+    }
+
+    int getStep() const
+    {
+        if (selectedDigit < 0 || selectedDigit >= 8)
+            return 100;
+
+        return steps[selectedDigit];
+    }
 
     void setFrequencyCallback(std::function<void(quint32)> cb)
     {
@@ -75,7 +88,7 @@ protected:
         p.setRenderHint(QPainter::Antialiasing);
         p.fillRect(rect(), QColor("#071017"));
 
-        // Всегда восемь цифр: 03600000.
+        // Всегда восемь цифр, например 03600000.
         const QString digits =
             QString("%1").arg(frequency, 8, 10, QChar('0'));
 
@@ -89,14 +102,16 @@ protected:
         const int baseY = height() / 2 + fm.ascent() / 2 - 5;
 
         for (int i = 0; i < 8; ++i) {
-            QRect r(startX + i * charWidth, 12,
-                charWidth, height() - 24);
+            const QRect r(
+                startX + i * charWidth,
+                12,
+                charWidth,
+                height() - 24);
 
             if (i == selectedDigit) {
                 p.setPen(Qt::NoPen);
                 p.setBrush(QColor("#00BFA5"));
-                p.drawRoundedRect(
-                    r.adjusted(1, 0, -1, 0), 5, 5);
+                p.drawRoundedRect(r.adjusted(1, 0, -1, 0), 5, 5);
             }
 
             p.setPen(i == selectedDigit
@@ -113,32 +128,55 @@ protected:
 
     void mousePressEvent(QMouseEvent* e) override
     {
-        if (e->button() != Qt::LeftButton) return;
+        if (e->button() != Qt::LeftButton) {
+            QWidget::mousePressEvent(e);
+            return;
+        }
 
         const QFont font("Consolas", 34, QFont::DemiBold);
-        const int cw = QFontMetrics(font).horizontalAdvance('0');
-        const int startX = (width() - cw * 7) / 2;
-        const int digit = (e->position().x() - startX) / cw;
+        const QFontMetrics fm(font);
 
-        if (digit >= 0 && digit < 7) {
-            selectedDigit = digit;
-            if (stepCallback) stepCallback(getStep());
-            update();
+        const int charWidth = fm.horizontalAdvance('0');
+        const int totalWidth = charWidth * 8;
+        const int startX = (width() - totalWidth) / 2;
+        const int x = static_cast<int>(e->position().x());
+
+        if (x >= startX && x < startX + totalWidth) {
+            const int digit = (x - startX) / charWidth;
+
+            if (digit >= 0 && digit < 8) {
+                selectedDigit = digit;
+
+                if (stepCallback)
+                    stepCallback(getStep());
+
+                update();
+            }
         }
+
+        QWidget::mousePressEvent(e);
     }
 
     void wheelEvent(QWheelEvent* e) override
     {
         const int delta = e->angleDelta().y();
-        if (delta == 0) return;
+
+        if (delta == 0) {
+            e->ignore();
+            return;
+        }
 
         const int direction = delta > 0 ? 1 : -1;
-        const qint64 next = qint64(frequency) + qint64(getStep()) * direction;
 
-        frequency = quint32(std::clamp<qint64>(
-            next, 0, 99999999));
+        const qint64 next =
+            qint64(frequency) + qint64(getStep()) * direction;
 
-        if (frequencyCallback) frequencyCallback(frequency);
+        frequency = quint32(
+            std::clamp<qint64>(next, 0, 99999999));
+
+        if (frequencyCallback)
+            frequencyCallback(frequency);
+
         update();
         e->accept();
     }
@@ -146,13 +184,13 @@ protected:
 private:
     quint32 frequency = 3600000;
 
-    // Частота отображается в Гц: 03600000.
-    // Индексы слева направо: 10 MHz, MHz, 100 kHz ... 1 Hz.
+    // Слева направо: 10 МГц, 1 МГц, 100 кГц ... 1 Гц.
     const int steps[8] = {
         10000000, 1000000, 100000, 10000,
         1000, 100, 10, 1
     };
 
+    // Начальный шаг настройки — 100 Гц.
     int selectedDigit = 5;
 
     std::function<void(quint32)> frequencyCallback;
@@ -178,11 +216,22 @@ public:
     {
         lo = std::clamp(low, 0, 5000);
         hi = std::clamp(high, 0, 5000);
+
+        if (lo > hi)
+            std::swap(lo, hi);
+
         update();
     }
 
-    int low() const { return lo; }
-    int high() const { return hi; }
+    int low() const
+    {
+        return lo;
+    }
+
+    int high() const
+    {
+        return hi;
+    }
 
     void setChangedCallback(std::function<void(int, int)> cb)
     {
@@ -199,6 +248,7 @@ protected:
     {
         const int left = 12;
         const int right = width() - 12;
+
         return left + (right - left) * value / 5000;
     }
 
@@ -206,8 +256,11 @@ protected:
     {
         const int left = 12;
         const int right = width() - 12;
-        return std::clamp((x - left) * 5000 / std::max(1, right - left),
-            0, 5000);
+
+        return std::clamp(
+            (x - left) * 5000 / std::max(1, right - left),
+            0,
+            5000);
     }
 
     void paintEvent(QPaintEvent*) override
@@ -221,10 +274,12 @@ protected:
         const int xl = xForValue(lo);
         const int xh = xForValue(hi);
 
-        p.setPen(QPen(QColor("#344955"), 8, Qt::SolidLine, Qt::RoundCap));
+        p.setPen(QPen(
+            QColor("#344955"), 8, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(x0, y, x1, y);
 
-        p.setPen(QPen(QColor("#69D8C5"), 8, Qt::SolidLine, Qt::RoundCap));
+        p.setPen(QPen(
+            QColor("#69D8C5"), 8, Qt::SolidLine, Qt::RoundCap));
         p.drawLine(xl, y, xh, y);
 
         p.setPen(Qt::NoPen);
@@ -240,31 +295,48 @@ protected:
 
     void mousePressEvent(QMouseEvent* e) override
     {
-        if (e->button() != Qt::LeftButton) return;
+        if (e->button() != Qt::LeftButton) {
+            QWidget::mousePressEvent(e);
+            return;
+        }
 
+        const int x = static_cast<int>(e->position().x());
         const int xl = xForValue(lo);
         const int xh = xForValue(hi);
 
-        dragLow = std::abs(int(e->position().x()) - xl)
-            <= std::abs(int(e->position().x()) - xh);
-
+        // Выбираем ближайший маркер.
+        dragLow = std::abs(x - xl) <= std::abs(x - xh);
         dragging = true;
-        moveMarker(int(e->position().x()));
+
+        moveMarker(x);
+        e->accept();
     }
 
     void mouseMoveEvent(QMouseEvent* e) override
     {
-        if (dragging) moveMarker(int(e->position().x()));
+        if (dragging && (e->buttons() & Qt::LeftButton)) {
+            moveMarker(static_cast<int>(e->position().x()));
+            e->accept();
+            return;
+        }
+
+        QWidget::mouseMoveEvent(e);
     }
 
     void mouseReleaseEvent(QMouseEvent* e) override
     {
-        if (!dragging || e->button() != Qt::LeftButton) return;
+        if (!dragging || e->button() != Qt::LeftButton) {
+            QWidget::mouseReleaseEvent(e);
+            return;
+        }
 
-        moveMarker(int(e->position().x()));
+        moveMarker(static_cast<int>(e->position().x()));
         dragging = false;
 
-        if (releasedCallback) releasedCallback(lo, hi);
+        if (releasedCallback)
+            releasedCallback(lo, hi);
+
+        e->accept();
     }
 
 private:
@@ -278,11 +350,14 @@ private:
             hi = std::max(value, lo);
 
         update();
-        if (changedCallback) changedCallback(lo, hi);
+
+        if (changedCallback)
+            changedCallback(lo, hi);
     }
 
     int lo = 300;
     int hi = 2700;
+
     bool dragging = false;
     bool dragLow = true;
 
@@ -309,12 +384,14 @@ MainWindow::MainWindow(QWidget* parent)
     title->setStyleSheet(
         "font-size: 22px; font-weight: bold; color: #69D8C5;");
 
-    // COM-порт
+    // COM-порт.
     auto* portLayout = new QHBoxLayout();
 
     portCombo = new QComboBox();
     baudCombo = new QComboBox();
-    baudCombo->addItems({ "9600", "19200", "38400", "57600", "115200" });
+    baudCombo->addItems({
+        "9600", "19200", "38400", "57600", "115200"
+        });
     baudCombo->setCurrentText("115200");
 
     refreshButton = new QPushButton("Обновить");
@@ -329,7 +406,7 @@ MainWindow::MainWindow(QWidget* parent)
     portLayout->addWidget(connectButton);
     portLayout->addWidget(statusLabel);
 
-    // Частота
+    // Частота.
     auto* freqGroup = new QGroupBox("Частота приёма · VFO A");
     auto* freqLayout = new QVBoxLayout(freqGroup);
 
@@ -355,7 +432,7 @@ MainWindow::MainWindow(QWidget* parent)
     freqLayout->addWidget(stepLabel);
     freqLayout->addLayout(directLayout);
 
-    // Круглая ручка настройки
+    // Круглая ручка настройки.
     auto* tuningGroup = new QGroupBox("Ручка настройки");
     auto* tuningLayout = new QHBoxLayout(tuningGroup);
 
@@ -374,7 +451,7 @@ MainWindow::MainWindow(QWidget* parent)
     tuningLayout->addWidget(dial);
     tuningLayout->addWidget(dialInfo, 1);
 
-    // Режимы
+    // Режимы демодуляции.
     auto* modeGroupBox = new QGroupBox("Режим демодуляции");
     auto* modeLayout = new QHBoxLayout(modeGroupBox);
 
@@ -385,7 +462,11 @@ MainWindow::MainWindow(QWidget* parent)
         const char* text;
         int mode;
     } modes[] = {
-        { "LSB", 1 },{ "USB", 2 },{ "CW", 3 },{ "FM", 4 },{ "AM", 5 }
+        { "LSB", 1 },
+        { "USB", 2 },
+        { "CW",  3 },
+        { "FM",  4 },
+        { "AM",  5 }
     };
 
     for (const auto& item : modes) {
@@ -393,12 +474,14 @@ MainWindow::MainWindow(QWidget* parent)
         button->setCheckable(true);
         button->setMinimumHeight(38);
         button->setProperty("radioMode", item.mode);
+
         modeGroup->addButton(button, item.mode);
         modeLayout->addWidget(button);
     }
 
-    // Фильтр
-    auto* filterGroup = new QGroupBox("Полоса пропускания · 0–5000 Гц");
+    // Фильтр.
+    auto* filterGroup = new QGroupBox(
+        "Полоса пропускания · 0–5000 Гц");
     auto* filterLayout = new QVBoxLayout(filterGroup);
 
     bandwidthLabel = new QLabel();
@@ -430,7 +513,7 @@ MainWindow::MainWindow(QWidget* parent)
     filterLayout->addWidget(bandwidthSlider);
     filterLayout->addLayout(filterEditLayout);
 
-    // Журнал CAT
+    // Журнал CAT.
     auto* logLabel = new QLabel("Журнал обмена TX / RX");
 
     logView = new QPlainTextEdit();
@@ -462,43 +545,81 @@ MainWindow::MainWindow(QWidget* parent)
     setCentralWidget(central);
 
     setStyleSheet(
-        "QMainWindow, QWidget { background: #101820; color: #E6EDF3; }"
-        "QGroupBox { border: 1px solid #344955; border-radius: 8px;"
-        "margin-top: 10px; padding-top: 12px; font-weight: bold; }"
-        "QGroupBox::title { subcontrol-origin: margin; left: 10px;"
-        "padding: 0 5px; color: #69D8C5; }"
-        "QComboBox, QLineEdit { background: #1D2A34; padding: 7px;"
-        "border: 1px solid #344955; border-radius: 4px; }"
-        "QPushButton { background: #176B5C; padding: 8px 12px;"
-        "border: none; border-radius: 5px; }"
-        "QPushButton:hover { background: #218776; }"
-        "QPushButton:checked { background: #218776;"
-        "border: 1px solid #69D8C5; }");
+        "QMainWindow, QWidget {"
+        " background: #101820; color: #E6EDF3;"
+        "}"
+        "QGroupBox {"
+        " border: 1px solid #344955;"
+        " border-radius: 8px;"
+        " margin-top: 10px;"
+        " padding-top: 12px;"
+        " font-weight: bold;"
+        "}"
+        "QGroupBox::title {"
+        " subcontrol-origin: margin;"
+        " left: 10px;"
+        " padding: 0 5px;"
+        " color: #69D8C5;"
+        "}"
+        "QComboBox, QLineEdit {"
+        " background: #1D2A34;"
+        " padding: 7px;"
+        " border: 1px solid #344955;"
+        " border-radius: 4px;"
+        "}"
+        "QPushButton {"
+        " background: #176B5C;"
+        " padding: 8px 12px;"
+        " border: none;"
+        " border-radius: 5px;"
+        "}"
+        "QPushButton:hover {"
+        " background: #218776;"
+        "}"
+        "QPushButton:checked {"
+        " background: #00BFA5;"
+        " color: #FFFFFF;"
+        " border: 2px solid #FFFFFF;"
+        " font-weight: bold;"
+        "}"
+        "QPushButton:checked:hover {"
+        " background: #00D7BA;"
+        "}"
+    );
 
     bandwidthSlider->setBand(lowCutHz, highCutHz);
     updateBand(lowCutHz, highCutHz);
     frequencyDisplay->setFrequency(currentFrequency);
 
-    frequencyDisplay->setFrequencyCallback([this](quint32 hz) {
-        currentFrequency = hz;
-        sendFrequency();
+    frequencyDisplay->setFrequencyCallback(
+        [this](quint32 hz) {
+            currentFrequency = hz;
+
+            auto* edit = findChild<QLineEdit*>("frequencyEdit");
+            if (edit && !edit->hasFocus())
+                edit->setText(QString::number(hz));
+
+            sendFrequency();
         });
 
-    frequencyDisplay->setStepCallback([this](int step) {
-        tuningStep = step;
-        stepLabel->setText("Шаг настройки: "
-            + QString::number(step) + " Гц");
+    frequencyDisplay->setStepCallback(
+        [this](int step) {
+            tuningStep = step;
+            stepLabel->setText(
+                "Шаг настройки: " + QString::number(step) + " Гц");
         });
 
-    bandwidthSlider->setChangedCallback([this](int lo, int hi) {
-        lowCutHz = lo;
-        highCutHz = hi;
-        updateBand(lo, hi);
+    bandwidthSlider->setChangedCallback(
+        [this](int lo, int hi) {
+            lowCutHz = lo;
+            highCutHz = hi;
+            updateBand(lo, hi);
         });
 
-    bandwidthSlider->setReleasedCallback([this](int lo, int hi) {
-        sendLowCut(lo);
-        sendHighCut(hi);
+    bandwidthSlider->setReleasedCallback(
+        [this](int lo, int hi) {
+            sendLowCut(lo);
+            sendHighCut(hi);
         });
 
     connect(refreshButton, &QPushButton::clicked,
@@ -513,37 +634,55 @@ MainWindow::MainWindow(QWidget* parent)
     connect(commandEdit, &QLineEdit::returnPressed,
         this, &MainWindow::sendCommand);
 
-    connect(setFrequencyButton, &QPushButton::clicked, this, [this, frequencyEdit]() {
-        bool ok = false;
-        const quint32 hz = frequencyEdit->text().trimmed().toUInt(&ok);
-        if (!ok || hz == 0) {
-            QMessageBox::warning(this, "Частота",
-                "Введи корректную частоту в герцах.");
-            return;
-        }
+    connect(setFrequencyButton, &QPushButton::clicked,
+        this, [this, frequencyEdit]() {
+            bool ok = false;
+            const quint32 hz =
+                frequencyEdit->text().trimmed().toUInt(&ok);
 
-        currentFrequency = hz;
-        frequencyDisplay->setFrequency(hz);
-        sendFrequency();
+            if (!ok || hz == 0 || hz > 99999999) {
+                QMessageBox::warning(
+                    this,
+                    "Частота",
+                    "Введи корректную частоту от 1 до 99999999 Гц.");
+                return;
+            }
+
+            currentFrequency = hz;
+            frequencyDisplay->setFrequency(hz);
+            sendFrequency();
+            frequencyEdit->setModified(false);
         });
 
-    connect(dial, &QDial::valueChanged, this, [this, dial](int value) {
-        const int delta = value;
-        if (delta == 0) return;
+    connect(dial, &QDial::valueChanged,
+        this, [this, dial](int value) {
+            // Учитываем изменение положения, а не весь путь от нуля
+            // при каждом событии valueChanged.
+            static int previousDialValue = 0;
 
-        const qint64 hz = qint64(currentFrequency)
-            + qint64(delta) * tuningStep;
+            const int delta = value - previousDialValue;
+            previousDialValue = value;
 
-        currentFrequency = quint32(std::clamp<qint64>(hz, 1, 99999999));
-        frequencyDisplay->setFrequency(currentFrequency);
+            if (delta == 0)
+                return;
 
-        auto* edit = findChild<QLineEdit*>("frequencyEdit");
-        if (edit) edit->setText(QString::number(currentFrequency));
+            const qint64 hz =
+                qint64(currentFrequency) + qint64(delta) * tuningStep;
+
+            currentFrequency = quint32(
+                std::clamp<qint64>(hz, 1, 99999999));
+
+            frequencyDisplay->setFrequency(currentFrequency);
+
+            auto* edit = findChild<QLineEdit*>("frequencyEdit");
+            if (edit && !edit->hasFocus())
+                edit->setText(QString::number(currentFrequency));
         });
 
-    connect(dial, &QDial::sliderReleased, this, [this, dial]() {
-        sendFrequency();
-        dial->setValue(0);
+    connect(dial, &QDial::sliderReleased,
+        this, [this, dial]() {
+            sendFrequency();
+            dial->setValue(0);
         });
 
     connect(modeGroup, &QButtonGroup::idClicked,
@@ -551,18 +690,25 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(setBandButton, &QPushButton::clicked,
         this, [this, lowEdit, highEdit]() {
-            bool okLow = false, okHigh = false;
+            bool okLow = false;
+            bool okHigh = false;
+
             const int lo = lowEdit->text().toInt(&okLow);
             const int hi = highEdit->text().toInt(&okHigh);
 
-            if (!okLow || !okHigh || lo < 0 || hi > 5000 || lo >= hi) {
-                QMessageBox::warning(this, "Полоса фильтра",
-                    "Нужны значения 0–5000 Гц, нижняя граница меньше верхней.");
+            if (!okLow || !okHigh ||
+                lo < 0 || hi > 5000 || lo >= hi) {
+                QMessageBox::warning(
+                    this,
+                    "Полоса фильтра",
+                    "Нужны значения 0–5000 Гц, "
+                    "нижняя граница меньше верхней.");
                 return;
             }
 
             lowCutHz = lo;
             highCutHz = hi;
+
             bandwidthSlider->setBand(lo, hi);
             updateBand(lo, hi);
             sendLowCut(lo);
@@ -571,7 +717,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     pollTimer = new QTimer(this);
     pollTimer->setInterval(3000);
-    connect(pollTimer, &QTimer::timeout, this, &MainWindow::pollRadio);
+
+    connect(pollTimer, &QTimer::timeout,
+        this, &MainWindow::pollRadio);
 
     refreshPorts();
 }
@@ -591,18 +739,24 @@ void MainWindow::refreshPorts()
         const std::wstring deviceName = name.toStdWString();
         wchar_t target[1024] = {};
 
-        if (QueryDosDeviceW(deviceName.c_str(), target,
+        if (QueryDosDeviceW(
+            deviceName.c_str(),
+            target,
             static_cast<DWORD>(std::size(target))) != 0) {
             portCombo->addItem(name);
         }
     }
 
     int index = portCombo->findText(previous);
-    if (index < 0) index = portCombo->findText("COM23");
-    if (index >= 0) portCombo->setCurrentIndex(index);
 
-    appendLog("[INFO] Найдено COM-портов: "
-        + QString::number(portCombo->count()));
+    if (index < 0)
+        index = portCombo->findText("COM23");
+
+    if (index >= 0)
+        portCombo->setCurrentIndex(index);
+
+    appendLog("[INFO] Найдено COM-портов: " +
+        QString::number(portCombo->count()));
 }
 
 void MainWindow::toggleConnection()
@@ -613,20 +767,26 @@ void MainWindow::toggleConnection()
     }
 
     if (portCombo->currentText().isEmpty()) {
-        QMessageBox::warning(this, "COM-порт", "Выбери COM-порт.");
+        QMessageBox::warning(
+            this, "COM-порт", "Выбери COM-порт.");
         return;
     }
 
-    const QString device = "\\\\.\\" + portCombo->currentText();
+    const QString device =
+        "\\\\.\\" + portCombo->currentText();
 
     HANDLE handle = CreateFileW(
         reinterpret_cast<LPCWSTR>(device.utf16()),
-        GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
 
     if (handle == INVALID_HANDLE_VALUE) {
-        appendLog("[ERR] Не удалось открыть порт. Код: "
-            + QString::number(GetLastError()));
+        appendLog("[ERR] Не удалось открыть порт. Код: " +
+            QString::number(GetLastError()));
         return;
     }
 
@@ -634,7 +794,8 @@ void MainWindow::toggleConnection()
     dcb.DCBlength = sizeof(dcb);
 
     if (!GetCommState(handle, &dcb)) {
-        appendLog("[ERR] GetCommState: " + QString::number(GetLastError()));
+        appendLog("[ERR] GetCommState: " +
+            QString::number(GetLastError()));
         CloseHandle(handle);
         return;
     }
@@ -646,7 +807,8 @@ void MainWindow::toggleConnection()
     dcb.fBinary = TRUE;
 
     if (!SetCommState(handle, &dcb)) {
-        appendLog("[ERR] SetCommState: " + QString::number(GetLastError()));
+        appendLog("[ERR] SetCommState: " +
+            QString::number(GetLastError()));
         CloseHandle(handle);
         return;
     }
@@ -662,6 +824,7 @@ void MainWindow::toggleConnection()
 
     connectButton->setText("Отключить");
     statusLabel->setText("Подключено");
+
     appendLog("[INFO] Подключено к " + portCombo->currentText());
 
     readerRunning = true;
@@ -674,9 +837,12 @@ void MainWindow::toggleConnection()
 void MainWindow::sendCommand()
 {
     QString command = commandEdit->text().trimmed();
-    if (command.isEmpty()) return;
 
-    if (!command.endsWith(';')) command += ';';
+    if (command.isEmpty())
+        return;
+
+    if (!command.endsWith(';'))
+        command += ';';
 
     sendRawCommand(command);
     commandEdit->clear();
@@ -692,9 +858,14 @@ void MainWindow::sendRawCommand(const QString& command)
     const QByteArray data = command.toLatin1();
     DWORD written = 0;
 
-    if (!WriteFile(serialHandle, data.constData(),
-        DWORD(data.size()), &written, nullptr)) {
-        appendLog("[ERR] WriteFile: " + QString::number(GetLastError()));
+    if (!WriteFile(
+        serialHandle,
+        data.constData(),
+        DWORD(data.size()),
+        &written,
+        nullptr)) {
+        appendLog("[ERR] WriteFile: " +
+            QString::number(GetLastError()));
         return;
     }
 
@@ -708,13 +879,20 @@ void MainWindow::readerLoop(HANDLE handle)
     while (readerRunning) {
         DWORD received = 0;
 
-        if (!ReadFile(handle, buffer, sizeof(buffer), &received, nullptr)) {
+        if (!ReadFile(
+            handle, buffer, sizeof(buffer), &received, nullptr)) {
             if (readerRunning) {
                 const DWORD error = GetLastError();
-                QMetaObject::invokeMethod(this, [this, error]() {
-                    appendLog("[ERR] ReadFile: " + QString::number(error));
-                    }, Qt::QueuedConnection);
+
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, error]() {
+                        appendLog("[ERR] ReadFile: " +
+                            QString::number(error));
+                    },
+                    Qt::QueuedConnection);
             }
+
             break;
         }
 
@@ -722,45 +900,53 @@ void MainWindow::readerLoop(HANDLE handle)
             const QString text = QString::fromLatin1(
                 QByteArray(buffer, int(received)));
 
-            QMetaObject::invokeMethod(this, [this, text]() {
-                appendLog("[RX] " + text);
-                processReceived(text);
-                }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(
+                this,
+                [this, text]() {
+                    appendLog("[RX] " + text);
+                    processReceived(text);
+                },
+                Qt::QueuedConnection);
         }
     }
 }
 
 void MainWindow::closePort()
 {
-    pollTimer->stop();
+    if (pollTimer)
+        pollTimer->stop();
 
     readerRunning = false;
 
-    if (serialHandle != INVALID_HANDLE_VALUE) {
+    if (serialHandle != INVALID_HANDLE_VALUE)
         CancelIoEx(serialHandle, nullptr);
-    }
 
     // Не закрываем handle до завершения потока чтения.
-    if (readerThread.joinable()) {
+    if (readerThread.joinable())
         readerThread.join();
-    }
 
     if (serialHandle != INVALID_HANDLE_VALUE) {
         CloseHandle(serialHandle);
         serialHandle = INVALID_HANDLE_VALUE;
     }
 
-    connectButton->setText("Подключить");
-    statusLabel->setText("Отключено");
-    appendLog("[INFO] COM-порт закрыт");
+    if (connectButton)
+        connectButton->setText("Подключить");
+
+    if (statusLabel)
+        statusLabel->setText("Отключено");
+
+    if (logView)
+        appendLog("[INFO] COM-порт закрыт");
 }
 
 void MainWindow::appendLog(const QString& text)
 {
-    const QString time = QDateTime::currentDateTime()
-        .toString("HH:mm:ss.zzz");
+    const QString time =
+        QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
 
     logView->appendPlainText("[" + time + "] " + text);
+
     logView->verticalScrollBar()->setValue(
         logView->verticalScrollBar()->maximum());
 }
@@ -775,7 +961,9 @@ void MainWindow::requestRadioState()
 
 void MainWindow::pollRadio()
 {
-    if (serialHandle == INVALID_HANDLE_VALUE) return;
+    if (serialHandle == INVALID_HANDLE_VALUE)
+        return;
+
     requestRadioState();
 }
 
@@ -786,7 +974,9 @@ void MainWindow::processReceived(const QString& text)
 
     while (true) {
         const int pos = rxPending.indexOf(';');
-        if (pos < 0) break;
+
+        if (pos < 0)
+            break;
 
         const QByteArray packet = rxPending.left(pos).trimmed();
         rxPending.remove(0, pos + 1);
@@ -794,15 +984,20 @@ void MainWindow::processReceived(const QString& text)
         if (packet.startsWith("FA") && packet.size() >= 3) {
             bool ok = false;
             const quint32 hz = packet.mid(2).toUInt(&ok);
-            if (ok) updateFrequency(hz);
+
+            if (ok)
+                updateFrequency(hz);
         }
         else if (packet.startsWith("MD") && packet.size() >= 3) {
             const int mode = packet.mid(2, 1).toInt();
-            if (mode >= 1 && mode <= 5) updateMode(mode);
+
+            if (mode >= 1 && mode <= 5)
+                updateMode(mode);
         }
         else if (packet.startsWith("SL") && packet.size() >= 3) {
             bool ok = false;
             const int lo = packet.mid(2).toInt(&ok);
+
             if (ok && lo >= 0 && lo <= 5000) {
                 lowCutHz = lo;
                 bandwidthSlider->setBand(lowCutHz, highCutHz);
@@ -812,6 +1007,7 @@ void MainWindow::processReceived(const QString& text)
         else if (packet.startsWith("SH") && packet.size() >= 3) {
             bool ok = false;
             const int hi = packet.mid(2).toInt(&ok);
+
             if (ok && hi >= 0 && hi <= 5000) {
                 highCutHz = hi;
                 bandwidthSlider->setBand(lowCutHz, highCutHz);
@@ -830,13 +1026,18 @@ void MainWindow::updateFrequency(quint32 hz)
     frequencyDisplay->setFrequency(hz);
 
     auto* edit = findChild<QLineEdit*>("frequencyEdit");
-    if (edit) edit->setText(QString::number(hz));
+
+    // Не перезаписываем значение, пока пользователь редактирует поле.
+    if (edit && !edit->hasFocus())
+        edit->setText(QString::number(hz));
 }
 
 void MainWindow::updateMode(int mode)
 {
     currentMode = mode;
+
     QAbstractButton* button = modeGroup->button(mode);
+
     if (button) {
         const QSignalBlocker blocker(modeGroup);
         button->setChecked(true);
@@ -847,51 +1048,75 @@ void MainWindow::updateBand(int low, int high)
 {
     bandwidthLabel->setText(
         QString("ФВЧ: %1 Гц     ФНЧ: %2 Гц     Ширина: %3 Гц")
-        .arg(low).arg(high).arg(high - low));
+        .arg(low)
+        .arg(high)
+        .arg(high - low));
 
     auto* lowEdit = findChild<QLineEdit*>("lowEdit");
     auto* highEdit = findChild<QLineEdit*>("highEdit");
 
-    if (lowEdit) lowEdit->setText(QString::number(low));
-    if (highEdit) highEdit->setText(QString::number(high));
+    // Не сбрасываем текст, который пользователь сейчас вводит.
+    if (lowEdit && !lowEdit->hasFocus())
+        lowEdit->setText(QString::number(low));
+
+    if (highEdit && !highEdit->hasFocus())
+        highEdit->setText(QString::number(high));
 }
 
 void MainWindow::sendFrequency()
 {
-    sendRawCommand(QString("FA%1;")
-        .arg(currentFrequency, 11, 10, QChar('0')));
+    sendRawCommand(
+        QString("FA%1;").arg(currentFrequency, 11, 10, QChar('0')));
+
     sendRawCommand("FA;");
 }
 
 void MainWindow::tuneFrequency(int direction)
 {
-    const qint64 hz = qint64(currentFrequency)
-        + qint64(tuningStep) * direction;
+    const qint64 hz =
+        qint64(currentFrequency) + qint64(tuningStep) * direction;
 
-    currentFrequency = quint32(std::clamp<qint64>(hz, 1, 99999999));
+    currentFrequency = quint32(
+        std::clamp<qint64>(hz, 1, 99999999));
+
     frequencyDisplay->setFrequency(currentFrequency);
+
+    auto* edit = findChild<QLineEdit*>("frequencyEdit");
+    if (edit && !edit->hasFocus())
+        edit->setText(QString::number(currentFrequency));
+
     sendFrequency();
 }
 
 void MainWindow::changeMode(int mode)
 {
-    if (mode < 1 || mode > 5) return;
+    if (mode < 1 || mode > 5)
+        return;
 
     currentMode = mode;
+
     sendRawCommand(QString("MD%1;").arg(mode));
     sendRawCommand("MD;");
 }
 
 void MainWindow::sendLowCut(int hz)
 {
-    if (hz < 0 || hz > 5000 || hz >= highCutHz) return;
+    if (hz < 0 || hz > 5000 || hz >= highCutHz)
+        return;
+
     lowCutHz = hz;
-    sendRawCommand(QString("SL%1;").arg(hz, 4, 10, QChar('0')));
+
+    sendRawCommand(
+        QString("SL%1;").arg(hz, 4, 10, QChar('0')));
 }
 
 void MainWindow::sendHighCut(int hz)
 {
-    if (hz < 0 || hz > 5000 || hz <= lowCutHz) return;
+    if (hz < 0 || hz > 5000 || hz <= lowCutHz)
+        return;
+
     highCutHz = hz;
-    sendRawCommand(QString("SH%1;").arg(hz, 4, 10, QChar('0')));
+
+    sendRawCommand(
+        QString("SH%1;").arg(hz, 4, 10, QChar('0')));
 }
