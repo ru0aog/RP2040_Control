@@ -23,6 +23,10 @@ qt_add_executable(RP2040_Control
     spectrumwidget.cpp
 )
 
+set_target_properties(RP2040_Control PROPERTIES  
+    WIN32_EXECUTABLE TRUE  
+)
+
 target_link_libraries(RP2040_Control PRIVATE
     Qt6::Widgets
     winmm
