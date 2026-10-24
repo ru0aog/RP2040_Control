@@ -31,6 +31,7 @@
 #include <QClipboard>
 #include <QTextCursor>
 #include <QQueue>
+#include <QGridLayout>
 
 #include <algorithm>
 #include <cmath>
@@ -99,22 +100,30 @@ protected:
 
         const QFontMetrics fm(font);
         const int charWidth = fm.horizontalAdvance('0');
-        const int totalWidth = charWidth * 8;
+        const int dotWidth = fm.horizontalAdvance('.');
+        const int unitGap = charWidth / 2;              // отступ перед "Гц"  
+        const int unitWidth = fm.horizontalAdvance("Гц");
+
+        const int totalWidth =
+            charWidth * 8 + dotWidth * 2 + unitGap + unitWidth;
         const int startX = (width() - totalWidth) / 2;
         const int baseY = height() / 2 + fm.ascent() / 2 - 5;
 
+        // X-смещение разряда i с учётом точек-разделителей.  
+        auto digitX = [&](int i) {
+            int extra = 0;
+            if (i >= 2) extra += dotWidth;   // точка после МГц (2 цифры)  
+            if (i >= 5) extra += dotWidth;   // точка после кГц (3 цифры)  
+            return startX + i * charWidth + extra;
+            };
+
         for (int i = 0; i < 8; ++i) {
-            const QRect r(
-                startX + i * charWidth,
-                12,
-                charWidth,
-                height() - 24);
+            const QRect r(digitX(i), 12, charWidth, height() - 24);
 
             if (i == selectedDigit) {
                 p.setPen(Qt::NoPen);
                 p.setBrush(QColor("#00BFA5"));
-                p.drawRoundedRect(
-                    r.adjusted(1, 0, -1, 0), 5, 5);
+                p.drawRoundedRect(r.adjusted(1, 0, -1, 0), 5, 5);
             }
 
             p.setPen(i == selectedDigit
@@ -124,9 +133,13 @@ protected:
             p.drawText(r.left(), baseY, QString(digits[i]));
         }
 
-        p.setPen(QColor("#69D8C5"));
-        p.setFont(QFont("Consolas", 12));
-        p.drawText(startX, height() - 7, "Hz");
+        // Точки-разделители МГц·кГц·Гц.  
+        p.setPen(QColor("#E6EDF3"));
+        p.drawText(digitX(2) - dotWidth, baseY, ".");
+        p.drawText(digitX(5) - dotWidth, baseY, ".");
+
+        // "Гц" справа тем же шрифтом/цветом/размером.  
+        p.drawText(digitX(7) + charWidth + unitGap, baseY, "Гц");
     }
 
     void mousePressEvent(QMouseEvent* e) override
@@ -136,25 +149,16 @@ protected:
             return;
         }
 
-        const QFont font("Consolas", 34, QFont::DemiBold);
-        const QFontMetrics fm(font);
+        const int digit =
+            digitAtX(static_cast<int>(e->position().x()));
 
-        const int charWidth = fm.horizontalAdvance('0');
-        const int totalWidth = charWidth * 8;
-        const int startX = (width() - totalWidth) / 2;
-        const int x = static_cast<int>(e->position().x());
+        if (digit >= 0) {
+            selectedDigit = digit;
 
-        if (x >= startX && x < startX + totalWidth) {
-            const int digit = (x - startX) / charWidth;
+            if (stepCallback)
+                stepCallback(getStep());
 
-            if (digit >= 0 && digit < 8) {
-                selectedDigit = digit;
-
-                if (stepCallback)
-                    stepCallback(getStep());
-
-                update();
-            }
+            update();
         }
 
         QWidget::mousePressEvent(e);
@@ -167,32 +171,23 @@ protected:
             return;
         }
 
-        const QFont font("Consolas", 34, QFont::DemiBold);
-        const QFontMetrics fm(font);
+        const int digit =
+            digitAtX(static_cast<int>(e->position().x()));
 
-        const int charWidth = fm.horizontalAdvance('0');
-        const int totalWidth = charWidth * 8;
-        const int startX = (width() - totalWidth) / 2;
-        const int x = static_cast<int>(e->position().x());
+        if (digit >= 0) {
+            selectedDigit = digit;
 
-        if (x >= startX && x < startX + totalWidth) {
-            const int digit = (x - startX) / charWidth;
+            // Обнуляем выбранный разряд и все разряды справа.  
+            const int step = steps[digit];
+            frequency = (frequency / (step * 10)) * (step * 10);
 
-            if (digit >= 0 && digit < 8) {
-                selectedDigit = digit;
+            if (frequencyCallback)
+                frequencyCallback(frequency);
 
-                // Обнуляем выбранный разряд и все разряды справа.
-                const int step = steps[digit];
-                frequency = (frequency / (step * 10)) * (step * 10);
+            if (stepCallback)
+                stepCallback(getStep());
 
-                if (frequencyCallback)
-                    frequencyCallback(frequency);
-
-                if (stepCallback)
-                    stepCallback(getStep());
-
-                update();
-            }
+            update();
         }
 
         e->accept();
@@ -223,6 +218,39 @@ protected:
     }
 
 private:
+    // Определяет индекс разряда (0..7) по X-координате клика  
+        // с учётом точек-разделителей и подписи "Гц".  
+        // Возвращает -1, если клик вне области цифр.  
+    int digitAtX(int px) const
+    {
+        const QFont font("Consolas", 34, QFont::DemiBold);
+        const QFontMetrics fm(font);
+
+        const int charWidth = fm.horizontalAdvance('0');
+        const int dotWidth = fm.horizontalAdvance('.');
+        const int unitGap = charWidth / 2;
+        const int unitWidth = fm.horizontalAdvance("Гц");
+
+        const int totalWidth =
+            charWidth * 8 + dotWidth * 2 + unitGap + unitWidth;
+        const int startX = (width() - totalWidth) / 2;
+
+        auto digitX = [&](int i) {
+            int extra = 0;
+            if (i >= 2) extra += dotWidth;
+            if (i >= 5) extra += dotWidth;
+            return startX + i * charWidth + extra;
+            };
+
+        for (int i = 0; i < 8; ++i) {
+            const int left = digitX(i);
+            if (px >= left && px < left + charWidth)
+                return i;
+        }
+
+        return -1;
+    }
+
     quint32 frequency = 3600000;
 
     const int steps[8] = {
@@ -235,7 +263,6 @@ private:
     std::function<void(quint32)> frequencyCallback;
     std::function<void(int)> stepCallback;
 };
-
 
 // ============================================================================
 // Полоса 0...5000 Гц с двумя перетаскиваемыми маркерами.
@@ -445,8 +472,11 @@ MainWindow::MainWindow(QWidget* parent)
     portLayout->addWidget(statusLabel);
 
     // Частота.
+    // Частота.  
     auto* freqGroup = new QGroupBox("Частота приёма · VFO A");
-    auto* freqLayout = new QVBoxLayout(freqGroup);
+    // Внешний горизонтальный ряд: слева — содержимое VFO, справа — кнопки диапазонов.  
+    auto* freqOuter = new QHBoxLayout(freqGroup);
+    auto* freqLayout = new QVBoxLayout();   // прежний вертикальный блок (без parent!)  
 
     frequencyDisplay = new FrequencyDisplay();
 
@@ -460,15 +490,64 @@ MainWindow::MainWindow(QWidget* parent)
     frequencyEdit->setObjectName("frequencyEdit");
     frequencyEdit->setPlaceholderText("Например, 3600000");
 
-    auto* setFrequencyButton = new QPushButton("Установить");
-
     directLayout->addWidget(directLabel);
     directLayout->addWidget(frequencyEdit, 1);
-    directLayout->addWidget(setFrequencyButton);
 
     freqLayout->addWidget(frequencyDisplay);
     freqLayout->addWidget(stepLabel);
     freqLayout->addLayout(directLayout);
+
+    // --- Кнопки диапазонов: два столбца по четыре ---  
+    struct BandPreset {
+        const char* text;
+        quint32 freq;
+        int mode;            // 1=LSB, 2=USB  
+    };
+
+    static const BandPreset bands[] = {
+        { "160",  1836000, 1 },
+        { "80",  3690000, 1 },
+        { "40",  7100000, 1 },
+        { "20", 14285000, 2 },
+        { "17", 18130000, 2 },
+        { "15", 21285000, 2 },
+        { "12", 24950000, 2 },
+        { "10", 28480000, 2 },
+    };
+
+    auto* bandGrid = new QGridLayout();
+    bandGrid->setHorizontalSpacing(4);
+    bandGrid->setVerticalSpacing(4);
+
+    for (int i = 0; i < 8; ++i) {
+        const BandPreset& b = bands[i];
+
+        auto* btn = new QPushButton(QString("%1 м").arg(b.text));
+        btn->setMaximumWidth(64);            // «узкие» — только за счёт геометрии  
+
+        const quint32 freq = b.freq;
+        const int mode = b.mode;
+
+        connect(btn, &QPushButton::clicked, this,
+            [this, freq, mode]() {
+                currentFrequency = freq;
+                frequencyDisplay->setFrequency(freq);
+
+                auto* edit = findChild<QLineEdit*>("frequencyEdit");
+                if (edit && !edit->hasFocus())
+                    edit->setText(QString::number(freq));
+
+                sendFrequency();      // FA...  
+                changeMode(mode);     // MD...  
+                updateMode(mode);     // подсветить кнопку режима  
+            });
+
+        // Первый столбец — строки 0..3, второй — строки 0..3.  
+        bandGrid->addWidget(btn, i % 4, i / 4);
+    }
+
+    freqOuter->addLayout(freqLayout, 1);
+    freqOuter->addLayout(bandGrid);
 
     // Ручка настройки полностью удалена.
 
@@ -656,7 +735,8 @@ MainWindow::MainWindow(QWidget* parent)
             if (edit && !edit->hasFocus())
                 edit->setText(QString::number(hz));
 
-            sendFrequency();
+            // Дебаунс: FA уходит один раз после остановки колеса.  
+            freqDebounceTimer->start();
         });
 
     frequencyDisplay->setStepCallback(
@@ -726,9 +806,6 @@ MainWindow::MainWindow(QWidget* parent)
         frequencyEdit->setText(QString::number(hz));
         frequencyEdit->setModified(false);
         };
-
-    connect(setFrequencyButton, &QPushButton::clicked,
-        this, setFrequency);
 
     connect(frequencyEdit, &QLineEdit::returnPressed,
         this, setFrequency);
@@ -816,6 +893,13 @@ MainWindow::MainWindow(QWidget* parent)
     connect(txTimer, &QTimer::timeout,  
     this, &MainWindow::sendNextQueued);
 
+    // Одноразовый дебаунс-таймер для отправки частоты при прокрутке.  
+    freqDebounceTimer = new QTimer(this);
+    freqDebounceTimer->setSingleShot(true);
+    freqDebounceTimer->setInterval(150);
+    connect(freqDebounceTimer, &QTimer::timeout,
+    this, &MainWindow::sendFrequency);
+
     refreshPorts();
 
     // Автоподключение при запуске: подключаемся к выбранному  
@@ -888,7 +972,7 @@ void MainWindow::toggleConnection()
         0,
         nullptr,
         OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
         nullptr);
 
     if (handle == INVALID_HANDLE_VALUE) {
@@ -964,17 +1048,39 @@ void MainWindow::sendRawCommand(const QString& command)
     const QByteArray data = command.toLatin1();
     DWORD written = 0;
 
-    if (!WriteFile(
-        serialHandle,
-        data.constData(),
-        DWORD(data.size()),
-        &written,
-        nullptr)) {
-        appendLog("[ERR] WriteFile: " +
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+
+    if (!ov.hEvent) {
+        appendLog("[ERR] CreateEvent (write): " +
             QString::number(GetLastError()));
         return;
     }
 
+    const BOOL ok = WriteFile(
+        serialHandle,
+        data.constData(),
+        DWORD(data.size()),
+        &written,
+        &ov);
+
+    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+        // Ждём завершения асинхронной записи.  
+        if (!GetOverlappedResult(serialHandle, &ov, &written, TRUE)) {
+            appendLog("[ERR] WriteFile (overlapped): " +
+                QString::number(GetLastError()));
+            CloseHandle(ov.hEvent);
+            return;
+        }
+    }
+    else if (!ok) {
+        appendLog("[ERR] WriteFile: " +
+            QString::number(GetLastError()));
+        CloseHandle(ov.hEvent);
+        return;
+    }
+
+    CloseHandle(ov.hEvent);
     appendLog("[TX] " + command);
 }
 
@@ -982,30 +1088,51 @@ void MainWindow::readerLoop(HANDLE handle)
 {
     char buffer[256];
 
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+
+    if (!ov.hEvent)
+        return;
+
     while (readerRunning) {
         DWORD received = 0;
+        ResetEvent(ov.hEvent);
 
-        if (!ReadFile(
-            handle, buffer, sizeof(buffer), &received, nullptr)) {
-            if (readerRunning) {
-                const DWORD error = GetLastError();
+        const BOOL ok = ReadFile(
+            handle, buffer, sizeof(buffer), &received, &ov);
 
-                QMetaObject::invokeMethod(
-                    this,
-                    [this, error]() {
-                        appendLog("[ERR] ReadFile: " +
-                            QString::number(error) +
-                            " — устройство отключено");
+        if (!ok) {
+            const DWORD err = GetLastError();
 
-                        // Закрываем порт в GUI-потоке.  
-                        // Проверка readerRunning внутри closePort не нужна:  
-                        // этот поток уже выходит из цикла по break.  
-                        closePort();
-                    },
-                    Qt::QueuedConnection);
+            if (err == ERROR_IO_PENDING) {
+                // Асинхронное чтение запущено — ждём завершения.  
+                if (!GetOverlappedResult(
+                    handle, &ov, &received, TRUE)) {
+                    if (readerRunning) {
+                        const DWORD error = GetLastError();
+                        QMetaObject::invokeMethod(
+                            this,
+                            [this, error]() {
+                                appendLog("[ERR] ReadFile: " +
+                                    QString::number(error));
+                            },
+                            Qt::QueuedConnection);
+                    }
+                    break;
+                }
             }
-
-            break;
+            else {
+                if (readerRunning) {
+                    QMetaObject::invokeMethod(
+                        this,
+                        [this, err]() {
+                            appendLog("[ERR] ReadFile: " +
+                                QString::number(err));
+                        },
+                        Qt::QueuedConnection);
+                }
+                break;
+            }
         }
 
         if (received > 0) {
@@ -1015,13 +1142,13 @@ void MainWindow::readerLoop(HANDLE handle)
                 this,
                 [this, data]() {
                     processReceived(data);
-
-                    // Отдельно декодируем принятые данные для журнала.
                     appendLog("[RX] " + QString::fromUtf8(data));
                 },
                 Qt::QueuedConnection);
         }
     }
+
+    CloseHandle(ov.hEvent);
 }
 
 void MainWindow::closePort()  

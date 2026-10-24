@@ -68,7 +68,8 @@ private:
 
     QButtonGroup* modeGroup = nullptr;  
     QTimer* pollTimer = nullptr;  
-    QTimer* txTimer = nullptr;  
+    QTimer* txTimer = nullptr;
+    QTimer* freqDebounceTimer = nullptr;   // дебаунс отправки FA при прокрутке
     QQueue<QByteArray> commandQueue;
 
     HANDLE serialHandle = INVALID_HANDLE_VALUE;
