@@ -994,7 +994,13 @@ void MainWindow::readerLoop(HANDLE handle)
                     this,
                     [this, error]() {
                         appendLog("[ERR] ReadFile: " +
-                            QString::number(error));
+                            QString::number(error) +
+                            " — устройство отключено");
+
+                        // Закрываем порт в GUI-потоке.  
+                        // Проверка readerRunning внутри closePort не нужна:  
+                        // этот поток уже выходит из цикла по break.  
+                        closePort();
                     },
                     Qt::QueuedConnection);
             }
@@ -1037,6 +1043,10 @@ void MainWindow::closePort()
         CloseHandle(serialHandle);
         serialHandle = INVALID_HANDLE_VALUE;
     }
+
+    // Останавливаем захват спектра вместе с портом.  
+    if (audioSpectrumWidget)
+        audioSpectrumWidget->stopCaptureIfActive();
 
     if (connectButton)
         connectButton->setText("Подключить");

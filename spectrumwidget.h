@@ -37,6 +37,7 @@ public:
     ~AudioSpectrumWidget() override;
 
     void startCaptureIfIdle();
+    void stopCaptureIfActive();
 
 private:
     static void CALLBACK waveInCallback(
@@ -64,6 +65,7 @@ private:
     void togglePlayback();
     bool startPlayback();
     void stopPlayback();
+    void requestStop();   // безопасный запрос остановки из любого потока
     void applyVolume();
 
     QComboBox* deviceCombo = nullptr;
@@ -99,6 +101,8 @@ private:
         playbackBuffers{};
 
     std::atomic_bool capturing{ false };
+    std::atomic_bool stopRequested{ false };     // защита от повторной остановки  
+    std::atomic<qint64> lastBufferMs{ 0 };       // время последнего WIM_DATA  
     std::mutex sampleMutex;
     std::atomic_bool playbackEnabled{ false };
     std::mutex playbackMutex;

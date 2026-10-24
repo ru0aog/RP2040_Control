@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QDateTime>
 #include <QPainterPath>
+#include <QMetaObject>
 
 #include <algorithm>
 #include <cmath>
@@ -67,6 +68,12 @@ static void calculateFFT(
             }
         }
     }
+}
+
+void AudioSpectrumWidget::stopCaptureIfActive()
+{
+    if (capturing.load())
+        stopCapture();
 }
 
 // ============================================================================
@@ -307,6 +314,24 @@ AudioSpectrumWidget::~AudioSpectrumWidget()
     stopCapture();
 }
 
+void AudioSpectrumWidget::requestStop()
+{
+    bool expected = false;
+
+    // Срабатывает только один раз, пока захват не перезапущен.  
+    if (!stopRequested.compare_exchange_strong(expected, true))
+        return;
+
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            stopCapture();
+            statusLabel->setText(
+                "Устройство отключено — захват остановлен");
+        },
+        Qt::QueuedConnection);
+}
+
 // ============================================================================
 // Перечисление устройств записи Windows
 // ============================================================================
@@ -464,6 +489,9 @@ bool AudioSpectrumWidget::startCapture()
             return false;
         }
     }
+    
+    stopRequested.store(false);
+    lastBufferMs.store(QDateTime::currentMSecsSinceEpoch());
 
     capturing = true;
 
@@ -737,6 +765,8 @@ void AudioSpectrumWidget::handleWaveBuffer(WAVEHDR* header)
         return;
 
     if (capturing.load() && header->dwBytesRecorded > 0) {
+        lastBufferMs.store(QDateTime::currentMSecsSinceEpoch());
+
         const auto* samples =
             reinterpret_cast<const qint16*>(header->lpData);
 
@@ -800,14 +830,18 @@ void AudioSpectrumWidget::handleWaveBuffer(WAVEHDR* header)
         }
     }
 
-    // Возвращаем входной буфер драйверу записи.
+    // Возвращаем входной буфер драйверу записи.  
     if (capturing.load() && waveIn) {
         header->dwBytesRecorded = 0;
 
-        waveInAddBuffer(
+        const MMRESULT result = waveInAddBuffer(
             waveIn,
             header,
             sizeof(WAVEHDR));
+
+        // Ошибка здесь = устройство пропало (выдернут USB).  
+        if (result != MMSYSERR_NOERROR)
+            requestStop();
     }
 }
 
@@ -817,6 +851,17 @@ void AudioSpectrumWidget::handleWaveBuffer(WAVEHDR* header)
 
 void AudioSpectrumWidget::updateSpectrum()
 {
+    // Watchdog: если буферы перестали приходить — устройство отключено.  
+    if (capturing.load()) {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const qint64 last = lastBufferMs.load();
+
+        if (last != 0 && now - last > 1500) {
+            requestStop();
+            return;
+        }
+    }
+
     QVector<qint16> input;
 
     {
