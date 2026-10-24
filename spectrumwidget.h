@@ -105,7 +105,7 @@ private:
 
     int sampleRate = 16000;
 
-    static constexpr int FFT_SIZE = 2048;
+    static constexpr int FFT_SIZE = 8192;
 
     // Коэффициент сглаживания EMA: 0..1.  
     // Меньше — сильнее усреднение (плавнее, но инертнее).  

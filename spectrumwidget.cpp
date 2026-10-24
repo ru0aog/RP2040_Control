@@ -204,7 +204,7 @@ protected:
     }
 
 private:
-    static constexpr int FFT_SIZE_LOCAL = 2048;
+    static constexpr int FFT_SIZE_LOCAL = 8192;
 
     QVector<float> spectrum;
     int sampleRate = 16000;
