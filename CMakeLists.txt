@@ -15,12 +15,13 @@ find_package(Qt6 6.7.3 REQUIRED COMPONENTS
 
 qt_standard_project_setup()
 
-qt_add_executable(RP2040_Control
-    main.cpp
-    mainwindow.h
-    mainwindow.cpp
-    spectrumwidget.h
-    spectrumwidget.cpp
+qt_add_executable(RP2040_Control  
+    main.cpp  
+    mainwindow.h  
+    mainwindow.cpp  
+    spectrumwidget.h  
+    spectrumwidget.cpp  
+    app.rc  
 )
 
 set_target_properties(RP2040_Control PROPERTIES  
