@@ -22,6 +22,7 @@ qt_add_executable(RP2040_Control
     spectrumwidget.h  
     spectrumwidget.cpp  
     app.rc  
+    app.qrc  
 )
 
 set_target_properties(RP2040_Control PROPERTIES  
