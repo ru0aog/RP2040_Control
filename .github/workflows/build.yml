@@ -10,35 +10,31 @@ jobs:
   build:  
     runs-on: windows-latest  
   
-    steps:  
+steps:  
       - name: Checkout  
         uses: actions/checkout@v4  
   
-      - name: Install Qt  
-        uses: jurplel/install-qt-action@v4  
+      - name: Setup MSYS2  
+        uses: msys2/setup-msys2@v2  
         with:  
-          version: '6.7.3'  
-          host: windows  
-          target: desktop  
-          arch: win64_msvc2019_64  
-  
-      - name: Setup MSVC  
-        uses: ilammy/msvc-dev-cmd@v1  
+          msystem: MINGW64  
+          update: true  
+          install: >-  
+            mingw-w64-x86_64-qt6-static  
+            mingw-w64-x86_64-cmake  
+            mingw-w64-x86_64-ninja  
+            mingw-w64-x86_64-gcc  
   
       - name: Configure CMake  
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"  
+        shell: msys2 {0}  
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/mingw64/qt6-static  
   
       - name: Build  
-        run: cmake --build build --config Release  
-  
-      - name: Deploy Qt dependencies  
-        run: |  
-          New-Item -ItemType Directory -Force -Path dist  
-          Copy-Item build/RP2040_Control.exe dist/  
-          windeployqt --release --no-translations --no-opengl-sw --no-system-d3d-compiler --skip-plugin-types networkinformation,tls,imageformats,iconengines --compiler-runtime dist/RP2040_Control.exe  
+        shell: msys2 {0}  
+        run: cmake --build build  
   
       - name: Upload build artifact  
         uses: actions/upload-artifact@v4  
         with:  
           name: RP2040_Control  
-          path: dist
+          path: build/RP2040_Control.exe
