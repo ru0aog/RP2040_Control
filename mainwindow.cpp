@@ -25,6 +25,7 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QEvent>
 #include <QFontMetrics>
 #include <QSignalBlocker>
 #include <QApplication>
@@ -356,7 +357,7 @@ protected:
         p.setPen(QColor("#9BAFBD"));
         p.setFont(QFont("Segoe UI", 9));
         p.drawText(x0, 52, "0");
-        p.drawText(x1 - 42, 52, "5000 Hz");
+        p.drawText(x1 - 42, 52, "5000 Гц");
     }
 
     void mousePressEvent(QMouseEvent* e) override
@@ -553,7 +554,7 @@ MainWindow::MainWindow(QWidget* parent)
     // Ручка настройки полностью удалена.
 
     // Режимы демодуляции.
-    auto* modeGroupBox = new QGroupBox("Демодулятор");
+    auto* modeGroupBox = new QGroupBox("Моды");
     auto* modeLayout = new QVBoxLayout(modeGroupBox);
 
     modeGroup = new QButtonGroup(this);
@@ -587,7 +588,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Фильтр.
     auto* filterGroup = new QGroupBox(
-        "Полоса пропускания · 0–5000 Гц");
+        "Полоса пропускания");
     auto* filterLayout = new QVBoxLayout(filterGroup);
 
     bandwidthLabel = new QLabel();
@@ -630,12 +631,11 @@ MainWindow::MainWindow(QWidget* parent)
     filterEditLayout->addWidget(normalButton);
     filterEditLayout->addWidget(wideButton);
 
-    filterLayout->addWidget(bandwidthLabel);
-    filterLayout->addWidget(bandwidthSlider);
-
-    // Аудиовход и спектр 0–8000 Гц.
+    // Аудиовход и спектр 0–6000 Гц.  
     audioSpectrumWidget = new AudioSpectrumWidget(filterGroup);
     filterLayout->addWidget(audioSpectrumWidget);
+
+    filterLayout->addWidget(bandwidthSlider);
 
     filterLayout->addLayout(filterEditLayout);
 
@@ -706,17 +706,38 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(logToggleButton, &QPushButton::toggled,
         this, [this, logToggleButton, logSection](bool shown) {
-            logSection->setVisible(shown);
-            logToggleButton->setText(shown
-                ? "▼ Журнал обмена и CAT-команды"
-                : "► Журнал обмена и CAT-команды");
+            if (shown) {
+                // Разворачиваем: добавляем окну высоту секции,  
+                // чтобы спектр не отдавал ей свою высоту.  
+                logSection->setVisible(true);
+                logToggleButton->setText("▼ Журнал обмена и CAT-команды");
 
-            // (3) не даём окну менять высоту при показе/скрытии секции  
-            const int w = width();
-            const int h = height();
-            QTimer::singleShot(0, this, [this, w, h]() {
-                resize(w, h);
-                });
+                const int add = logSection->sizeHint().height();
+                const int w = width();
+                const int h = height();
+                QTimer::singleShot(0, this, [this, w, h, add]() {
+                    resize(w, h + add);
+                    });
+            }
+            else {
+                // Пиним текущую высоту спектра, чтобы при скрытии секции    
+                // он НЕ растянулся вниз на освободившееся место.    
+                const int specH = audioSpectrumWidget->height();
+                audioSpectrumWidget->setMaximumHeight(specH);
+
+                const int sub = logSection->height();
+                logSection->setVisible(false);
+                logToggleButton->setText("► Журнал обмена и CAT-команды");
+
+                const int w = width();
+                const int h = height();
+                QTimer::singleShot(0, this, [this, w, h, sub]() {
+                    resize(w, h - sub);
+                    // Снимаем ограничение: теперь при разворачивании окна    
+                    // на весь экран спектр снова сможет растягиваться.    
+                    audioSpectrumWidget->setMaximumHeight(QWIDGETSIZE_MAX);
+                    });
+            }
         });
 
     mainLayout->addWidget(title);
@@ -955,6 +976,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     refreshPorts();
 
+    // Колесо мыши меняет частоту над всей областью окна.  
+    qApp->installEventFilter(this);
+
     // Автоподключение при запуске: подключаемся к выбранному  
     // COM-порту, если это не COM1, и сразу запускаем захват звука.  
     const QString autoPort = portCombo->currentText();
@@ -967,6 +991,35 @@ MainWindow::MainWindow(QWidget* parent)
             audioSpectrumWidget->startPlaybackIfIdle();
         }
     }
+}
+
+
+bool MainWindow::eventFilter(QObject* obj, QEvent* event)
+{
+    if (event->type() == QEvent::Wheel && frequencyDisplay) {
+        QWidget* w = qobject_cast<QWidget*>(obj);
+
+        // Для виджетов, где у колеса своё назначение (прокрутка журнала,  
+        // раскрытый список, слайдеры полосы/громкости, блок спектра),  
+        // оставляем поведение по умолчанию.  
+        for (QWidget* p = w; p; p = p->parentWidget()) {
+            if (p == frequencyDisplay)
+                return QMainWindow::eventFilter(obj, event);
+
+            if (qobject_cast<QComboBox*>(p) ||
+                p == logView ||
+                p == bandwidthSlider ||
+                p == audioSpectrumWidget) {
+                return QMainWindow::eventFilter(obj, event);
+            }
+        }
+
+        // Везде ещё — перенаправляем колесо на индикатор частоты.  
+        QApplication::sendEvent(frequencyDisplay, event);
+        return true;
+    }
+
+    return QMainWindow::eventFilter(obj, event);
 }
 
 MainWindow::~MainWindow()
