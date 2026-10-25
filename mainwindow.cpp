@@ -39,6 +39,8 @@
 #include <functional>
 #include <iterator>
 #include <utility>
+#include <dwmapi.h>  
+#pragma comment(lib, "dwmapi.lib")
 
 // ============================================================================
 // Индикатор частоты: клик выбирает разряд, колесо мыши изменяет частоту.
@@ -439,17 +441,13 @@ private:
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
-    setWindowTitle("RP2040 Control");
+    setWindowTitle("RP2040 RECEIVER Control");
     setMinimumWidth(630);
     resize(630, 820);
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
     mainLayout->setSpacing(12);
-
-    auto* title = new QLabel("RP2040 RECEIVER");
-    title->setStyleSheet(
-        "font-size: 22px; font-weight: bold; color: #69D8C5;");
 
     // COM-порт.
     auto* portLayout = new QHBoxLayout();
@@ -475,7 +473,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Частота.
     // Частота.  
-    auto* freqGroup = new QGroupBox("Частота приёма · VFO A");
+    auto* freqGroup = new QGroupBox("Частота приёма");
     // Внешний горизонтальный ряд: слева — содержимое VFO, справа — кнопки диапазонов.  
     auto* freqOuter = new QHBoxLayout(freqGroup);
     auto* freqLayout = new QVBoxLayout();   // прежний вертикальный блок (без parent!)  
@@ -554,7 +552,7 @@ MainWindow::MainWindow(QWidget* parent)
     // Ручка настройки полностью удалена.
 
     // Режимы демодуляции.
-    auto* modeGroupBox = new QGroupBox("Моды");
+    auto* modeGroupBox = new QGroupBox("Мода");
     auto* modeLayout = new QVBoxLayout(modeGroupBox);
 
     modeGroup = new QButtonGroup(this);
@@ -612,11 +610,13 @@ MainWindow::MainWindow(QWidget* parent)
 
     ntButton = new QPushButton("NT");
     ntButton->setCheckable(true);
-    ntButton->setMinimumHeight(38);
+    ntButton->setMinimumHeight(30);
+    ntButton->setMinimumWidth(54);
 
     nrButton = new QPushButton("NR");
     nrButton->setCheckable(true);
-    nrButton->setMinimumHeight(38);
+    nrButton->setMinimumHeight(30);
+    nrButton->setMinimumWidth(54);
 
     filterEditLayout->addWidget(ntButton);
     filterEditLayout->addWidget(nrButton);
@@ -740,7 +740,6 @@ MainWindow::MainWindow(QWidget* parent)
             }
         });
 
-    mainLayout->addWidget(title);
     mainLayout->addLayout(portLayout);
     mainLayout->addLayout(topRow);
     mainLayout->addWidget(filterGroup);
@@ -748,6 +747,16 @@ MainWindow::MainWindow(QWidget* parent)
     mainLayout->addWidget(logSection, 1);
 
     setCentralWidget(central);
+
+    // Вариант 1: тёмная системная полоска заголовка.  
+    {
+        const HWND hwnd = reinterpret_cast<HWND>(winId());
+        BOOL dark = TRUE;
+        // DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 2004+),  
+        // на более ранних сборках атрибут = 19.  
+        if (FAILED(DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark))))
+            DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark));
+    }
 
     setStyleSheet(
         "QMainWindow, QWidget {"
