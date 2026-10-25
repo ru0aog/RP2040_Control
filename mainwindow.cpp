@@ -39,8 +39,11 @@
 #include <functional>
 #include <iterator>
 #include <utility>
+
 #include <dwmapi.h>  
-#pragma comment(lib, "dwmapi.lib")
+#ifdef _MSC_VER  
+#pragma comment(lib, "dwmapi.lib")  
+#endif
 
 // ============================================================================
 // Индикатор частоты: клик выбирает разряд, колесо мыши изменяет частоту.
