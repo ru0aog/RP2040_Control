@@ -21,6 +21,7 @@ jobs:
           host: windows  
           target: desktop  
           arch: win64_msvc2019_64  
+          cache: true  
   
       - name: Setup MSVC  
         uses: ilammy/msvc-dev-cmd@v1  
@@ -38,7 +39,7 @@ jobs:
           windeployqt --release --no-translations --no-opengl-sw --no-system-d3d-compiler --skip-plugin-types networkinformation,tls,imageformats,iconengines --compiler-runtime dist/RP2040_Control.exe  
   
       - name: Install Enigma Virtual Box  
-        run: choco install enigmavirtualbox -y --ignore-checksums
+        run: choco install enigmavirtualbox -y --ignore-checksums  
   
       - name: Pack into single exe  
         shell: pwsh  
